@@ -13051,49 +13051,6 @@ function inferExampleValue(key, description) {
   return "";
 }
 
-// src/fertilityCycleHint.ts
-function pickInitialCycleState(bias) {
-  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
-  switch (bias) {
-    case "menstruating": {
-      const day = roll(1, 5);
-      return { day, description: `menstruating (cycle_stage_id 1)` };
-    }
-    case "start_follicular": {
-      const day = roll(6, 10);
-      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
-    }
-    case "close_ovulation": {
-      const day = roll(11, 13);
-      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
-    }
-    case "ovulating": {
-      const day = roll(14, 16);
-      return { day, description: `ovulating (cycle_stage_id 3)` };
-    }
-    case "start_luteal": {
-      const day = roll(17, 21);
-      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
-    }
-    case "end_luteal": {
-      const day = roll(24, 28);
-      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
-    }
-    case "random":
-    default: {
-      const day = roll(1, 28);
-      return { day, description: "" };
-    }
-  }
-}
-function buildFirstMessageHint(bias) {
-  const { day, description } = pickInitialCycleState(bias);
-  if (!description && bias !== "random")
-    return "";
-  const qualifier = description ? `, ${description}` : "";
-  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
-}
-
 // src/trackerConfig.ts
 var FERTILITY_CYCLE_BIAS_VALUES = [
   "random",
@@ -13129,60 +13086,6 @@ var DEFAULT_CONFIG = {
   typeSafeConception: true,
   typeSafeConfidenceFloor: 0.6
 };
-
-// src/backendConfig.ts
-function sanitizeTrackerFormat(value) {
-  return value === "yaml" ? "yaml" : "json";
-}
-function sanitizeTemplateId(value) {
-  if (typeof value !== "string")
-    return DEFAULT_CONFIG.templateId;
-  const trimmed = value.trim();
-  return trimmed || DEFAULT_CONFIG.templateId;
-}
-function sanitizeRetainCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.retainTrackerCount;
-  return Math.max(0, Math.min(20, Math.floor(value)));
-}
-function sanitizeInlineEnabled(value) {
-  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
-}
-function sanitizeBool(value, fallback) {
-  return typeof value === "boolean" ? value : fallback;
-}
-function sanitizeStr(value, fallback) {
-  return typeof value === "string" ? value.trim() : fallback;
-}
-function sanitizeFertilityCycleBias(value) {
-  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
-}
-function sanitizeSecondaryLLMModel(value, fallback) {
-  const raw = sanitizeStr(value, fallback);
-  const lowered = raw.toLowerCase();
-  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
-    return "";
-  }
-  return raw;
-}
-function sanitizeMessageCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMMessageCount;
-  return Math.max(1, Math.min(50, Math.floor(value)));
-}
-function sanitizeTemperature(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMTemperature;
-  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
-}
-function sanitizeTypeSafeModel(value) {
-  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
-  return model || DEFAULT_CONFIG.typeSafeModel;
-}
-function sanitizeConfidenceFloor(value) {
-  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
-  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
-}
 
 // src/trackerSyntax.ts
 function sanitizeIdentifier(value) {
@@ -13249,6 +13152,281 @@ function extractTrackerTagLoose(message, tagName) {
   const re = buildTrackerTagRegex(tagName, "ig");
   const match = re.exec(message);
   return match ? (match[2] || "").trim() || null : null;
+}
+
+// src/trackerCommandText.ts
+function buildTemplateExampleData(preset) {
+  const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
+  const worldData = {
+    current_date: "YYYY-MM-DD",
+    current_time: "HH:MM"
+  };
+  const character = {
+    name: "Character Name"
+  };
+  for (const field of fields) {
+    const key = typeof field?.key === "string" ? field.key.trim() : "";
+    if (!key)
+      continue;
+    const description = typeof field?.description === "string" ? field.description : "";
+    const sample = inferExampleValue(key, description);
+    if (key.startsWith("worldData.")) {
+      setDeep(worldData, key.slice("worldData.".length), sample);
+      continue;
+    }
+    const normalizedKey = key.replace(/^character\./i, "").replace(/^characters\[\]\./i, "");
+    if (!normalizedKey || normalizedKey.toLowerCase() === "name")
+      continue;
+    setDeep(character, normalizedKey, sample);
+  }
+  return {
+    worldData,
+    characters: [character]
+  };
+}
+function formatTrackerPayload(data, format, identifier, tagName) {
+  const safeTagName = sanitizeTagName(tagName);
+  const safeIdentifier = sanitizeIdentifier(identifier);
+  const body = format === "yaml" ? stringify3(data).trimEnd() : JSON.stringify(data, null, 2);
+  return `<${safeTagName} type="${safeIdentifier}">
+${body}
+</${safeTagName}>`;
+}
+function replaceTrackerBlock(content, identifier, replacementBlock, tagName) {
+  const tagRe = buildTrackerTagRegex(tagName, "ig");
+  const desiredType = sanitizeIdentifier(identifier);
+  let replaced = false;
+  const withTag = content.replace(tagRe, (full, attrsRaw) => {
+    const attrs = parseTagAttributes(String(attrsRaw || ""));
+    const foundType = sanitizeIdentifier(attrs.type || "");
+    if (foundType && foundType !== desiredType)
+      return full;
+    if (replaced)
+      return full;
+    replaced = true;
+    return replacementBlock;
+  });
+  if (replaced)
+    return withTag;
+  const re = buildTrackerFenceRegex(identifier, "i");
+  return withTag.replace(re, replacementBlock);
+}
+
+// src/fertilityCycleHint.ts
+function pickInitialCycleState(bias) {
+  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+  switch (bias) {
+    case "menstruating": {
+      const day = roll(1, 5);
+      return { day, description: `menstruating (cycle_stage_id 1)` };
+    }
+    case "start_follicular": {
+      const day = roll(6, 10);
+      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
+    }
+    case "close_ovulation": {
+      const day = roll(11, 13);
+      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
+    }
+    case "ovulating": {
+      const day = roll(14, 16);
+      return { day, description: `ovulating (cycle_stage_id 3)` };
+    }
+    case "start_luteal": {
+      const day = roll(17, 21);
+      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
+    }
+    case "end_luteal": {
+      const day = roll(24, 28);
+      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
+    }
+    case "random":
+    default: {
+      const day = roll(1, 28);
+      return { day, description: "" };
+    }
+  }
+}
+function buildFirstMessageHint(bias) {
+  const { day, description } = pickInitialCycleState(bias);
+  if (!description && bias !== "random")
+    return "";
+  const qualifier = description ? `, ${description}` : "";
+  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
+}
+
+// src/presetSanitizers.ts
+function upgradeLegacyImportedPreset(preset) {
+  const html = preset.htmlTemplate || "";
+  const isMissingAttire = !html.includes("nw-attire");
+  const bundled = getTemplatePresetById("narrative-weave-simtracker");
+  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
+  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
+  const isOutdatedRevision = importedRevision < bundledRevision;
+  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
+  if (!isLegacyNarrativeWeave)
+    return preset;
+  return {
+    ...preset,
+    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
+    ...isMissingAttire || isOutdatedRevision ? {
+      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
+      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
+      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
+      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
+      customFields: bundled.customFields || preset.customFields,
+      extSettings: bundled.extSettings || preset.extSettings
+    } : {}
+  };
+}
+function sanitizePresetArray(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
+    const p = item;
+    return upgradeLegacyImportedPreset({
+      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
+      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
+      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
+      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+      customFields: Array.isArray(p.customFields) ? p.customFields : [],
+      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+    });
+  });
+}
+function sanitizeSinglePreset(value, fallbackId) {
+  if (!value || typeof value !== "object")
+    return null;
+  const p = value;
+  return {
+    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
+    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
+    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
+    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+    customFields: Array.isArray(p.customFields) ? p.customFields : [],
+    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+  };
+}
+function sanitizeInlinePacks(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter((item) => item && typeof item === "object");
+}
+
+// src/backendConfig.ts
+function sanitizeTrackerFormat(value) {
+  return value === "yaml" ? "yaml" : "json";
+}
+function sanitizeTemplateId(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.templateId;
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_CONFIG.templateId;
+}
+function sanitizeRetainCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.retainTrackerCount;
+  return Math.max(0, Math.min(20, Math.floor(value)));
+}
+function sanitizeInlineEnabled(value) {
+  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
+}
+function sanitizeBool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function sanitizeStr(value, fallback) {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+function sanitizeFertilityCycleBias(value) {
+  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
+}
+function sanitizeSecondaryLLMModel(value, fallback) {
+  const raw = sanitizeStr(value, fallback);
+  const lowered = raw.toLowerCase();
+  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
+    return "";
+  }
+  return raw;
+}
+function sanitizeMessageCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMMessageCount;
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+function sanitizeTemperature(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMTemperature;
+  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
+}
+function sanitizeTypeSafeModel(value) {
+  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
+  return model || DEFAULT_CONFIG.typeSafeModel;
+}
+function sanitizeConfidenceFloor(value) {
+  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
+  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
+}
+function normalizeStoredConfig(parsed) {
+  return {
+    trackerTagName: sanitizeTagName(parsed.trackerTagName),
+    codeBlockIdentifier: sanitizeIdentifier(parsed.codeBlockIdentifier),
+    hideSimBlocks: sanitizeBool(parsed.hideSimBlocks, DEFAULT_CONFIG.hideSimBlocks),
+    templateId: sanitizeTemplateId(parsed.templateId),
+    trackerFormat: sanitizeTrackerFormat(parsed.trackerFormat),
+    retainTrackerCount: sanitizeRetainCount(parsed.retainTrackerCount),
+    enableInlineTemplates: sanitizeInlineEnabled(parsed.enableInlineTemplates),
+    userPresets: sanitizePresetArray(parsed.userPresets),
+    inlinePacks: sanitizeInlinePacks(parsed.inlinePacks),
+    useSecondaryLLM: sanitizeBool(parsed.useSecondaryLLM, DEFAULT_CONFIG.useSecondaryLLM),
+    secondaryLLMConnectionId: sanitizeStr(parsed.secondaryLLMConnectionId, DEFAULT_CONFIG.secondaryLLMConnectionId),
+    secondaryLLMModel: sanitizeSecondaryLLMModel(parsed.secondaryLLMModel, DEFAULT_CONFIG.secondaryLLMModel),
+    secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
+    secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
+    secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
+    fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
+    typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
+    typeSafeApiKey: "",
+    typeSafeModel: sanitizeTypeSafeModel(parsed.typeSafeModel),
+    typeSafeQuickAppend: sanitizeBool(parsed.typeSafeQuickAppend, DEFAULT_CONFIG.typeSafeQuickAppend),
+    typeSafeVerify: sanitizeBool(parsed.typeSafeVerify, DEFAULT_CONFIG.typeSafeVerify),
+    typeSafeConception: sanitizeBool(parsed.typeSafeConception, DEFAULT_CONFIG.typeSafeConception),
+    typeSafeConfidenceFloor: sanitizeConfidenceFloor(parsed.typeSafeConfidenceFloor)
+  };
+}
+function mergeTrackerConfig(config, incoming) {
+  return {
+    trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
+    codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),
+    hideSimBlocks: sanitizeBool(incoming?.hideSimBlocks ?? config.hideSimBlocks, config.hideSimBlocks),
+    templateId: sanitizeTemplateId(incoming?.templateId ?? config.templateId),
+    trackerFormat: sanitizeTrackerFormat(incoming?.trackerFormat ?? config.trackerFormat),
+    retainTrackerCount: sanitizeRetainCount(incoming?.retainTrackerCount ?? config.retainTrackerCount),
+    enableInlineTemplates: sanitizeInlineEnabled(incoming?.enableInlineTemplates ?? config.enableInlineTemplates),
+    userPresets: sanitizePresetArray(incoming?.userPresets ?? config.userPresets),
+    inlinePacks: sanitizeInlinePacks(incoming?.inlinePacks ?? config.inlinePacks),
+    useSecondaryLLM: sanitizeBool(incoming?.useSecondaryLLM ?? config.useSecondaryLLM, config.useSecondaryLLM),
+    secondaryLLMConnectionId: sanitizeStr(incoming?.secondaryLLMConnectionId ?? config.secondaryLLMConnectionId, config.secondaryLLMConnectionId),
+    secondaryLLMModel: sanitizeSecondaryLLMModel(incoming?.secondaryLLMModel ?? config.secondaryLLMModel, config.secondaryLLMModel),
+    secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
+    secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
+    secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
+    fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
+    typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
+    typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),
+    typeSafeModel: sanitizeTypeSafeModel(incoming?.typeSafeModel ?? config.typeSafeModel),
+    typeSafeQuickAppend: sanitizeBool(incoming?.typeSafeQuickAppend ?? config.typeSafeQuickAppend, config.typeSafeQuickAppend),
+    typeSafeVerify: sanitizeBool(incoming?.typeSafeVerify ?? config.typeSafeVerify, config.typeSafeVerify),
+    typeSafeConception: sanitizeBool(incoming?.typeSafeConception ?? config.typeSafeConception, config.typeSafeConception),
+    typeSafeConfidenceFloor: sanitizeConfidenceFloor(incoming?.typeSafeConfidenceFloor ?? config.typeSafeConfidenceFloor)
+  };
 }
 
 // src/trackerMessageCodec.ts
@@ -13623,72 +13801,6 @@ function stripStructuralHTML(text) {
     stripped = stripped.replace(new RegExp(`<${tag}[^>]*\\/>`, "gi"), "");
   }
   return stripped.replace(/\s+/g, " ").trim();
-}
-
-// src/presetSanitizers.ts
-function upgradeLegacyImportedPreset(preset) {
-  const html = preset.htmlTemplate || "";
-  const isMissingAttire = !html.includes("nw-attire");
-  const bundled = getTemplatePresetById("narrative-weave-simtracker");
-  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
-  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
-  const isOutdatedRevision = importedRevision < bundledRevision;
-  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
-  if (!isLegacyNarrativeWeave)
-    return preset;
-  return {
-    ...preset,
-    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
-    ...isMissingAttire || isOutdatedRevision ? {
-      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
-      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
-      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
-      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
-      customFields: bundled.customFields || preset.customFields,
-      extSettings: bundled.extSettings || preset.extSettings
-    } : {}
-  };
-}
-function sanitizePresetArray(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
-    const p = item;
-    return upgradeLegacyImportedPreset({
-      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
-      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
-      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
-      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-      customFields: Array.isArray(p.customFields) ? p.customFields : [],
-      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-    });
-  });
-}
-function sanitizeSinglePreset(value, fallbackId) {
-  if (!value || typeof value !== "object")
-    return null;
-  const p = value;
-  return {
-    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
-    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
-    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
-    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-    customFields: Array.isArray(p.customFields) ? p.customFields : [],
-    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-  };
-}
-function sanitizeInlinePacks(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object");
 }
 
 // src/backendMessageContext.ts
@@ -14429,47 +14541,15 @@ function buildConceptionDirective(names) {
   const pronoun = names.length === 1 ? "her" : "them";
   return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
 }
-function buildTemplateExampleData() {
-  const preset = getActivePreset();
-  const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
-  const worldData = {
-    current_date: "YYYY-MM-DD",
-    current_time: "HH:MM"
-  };
-  const character = {
-    name: "Character Name"
-  };
-  for (const field of fields) {
-    const key = typeof field?.key === "string" ? field.key.trim() : "";
-    if (!key)
-      continue;
-    const description = typeof field?.description === "string" ? field.description : "";
-    const sample = inferExampleValue(key, description);
-    if (key.startsWith("worldData.")) {
-      setDeep(worldData, key.slice("worldData.".length), sample);
-      continue;
-    }
-    const normalizedKey = key.replace(/^character\./i, "").replace(/^characters\[\]\./i, "");
-    if (!normalizedKey || normalizedKey.toLowerCase() === "name")
-      continue;
-    setDeep(character, normalizedKey, sample);
-  }
-  return {
-    worldData,
-    characters: [character]
-  };
+function buildTemplateExampleData2() {
+  return buildTemplateExampleData(getActivePreset());
 }
 function buildExampleTrackerBlock(format, identifier) {
-  const data = buildTemplateExampleData();
-  return formatTrackerPayload(data, format, identifier);
+  const data = buildTemplateExampleData2();
+  return formatTrackerPayload2(data, format, identifier);
 }
-function formatTrackerPayload(data, format, identifier) {
-  const tagName = sanitizeTagName(config.trackerTagName);
-  const safeIdentifier = sanitizeIdentifier(identifier);
-  const body = format === "yaml" ? stringify3(data).trimEnd() : JSON.stringify(data, null, 2);
-  return `<${tagName} type="${safeIdentifier}">
-${body}
-</${tagName}>`;
+function formatTrackerPayload2(data, format, identifier) {
+  return formatTrackerPayload(data, format, identifier, config.trackerTagName);
 }
 function buildCommandResponse(payload) {
   return {
@@ -14480,24 +14560,8 @@ function buildCommandResponse(payload) {
 function makeStarterTrackerBlock() {
   return buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
 }
-function replaceTrackerBlock(content, identifier, replacementBlock) {
-  const tagRe = buildTrackerTagRegex(config.trackerTagName, "ig");
-  const desiredType = sanitizeIdentifier(identifier);
-  let replaced = false;
-  const withTag = content.replace(tagRe, (full, attrsRaw) => {
-    const attrs = parseTagAttributes(String(attrsRaw || ""));
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== desiredType)
-      return full;
-    if (replaced)
-      return full;
-    replaced = true;
-    return replacementBlock;
-  });
-  if (replaced)
-    return withTag;
-  const re = buildTrackerFenceRegex(identifier, "i");
-  return withTag.replace(re, replacementBlock);
+function replaceTrackerBlock2(content, identifier, replacementBlock) {
+  return replaceTrackerBlock(content, identifier, replacementBlock, config.trackerTagName);
 }
 async function mutateChatForCommand(command, arg1, ctx) {
   if (!hasPermission("chat_mutation") || !ctx.chatId)
@@ -14575,8 +14639,8 @@ ${block}`;
     };
   }
   const targetFormat = command === "/sst-convert" ? arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : config.trackerFormat : config.trackerFormat;
-  const replacement = formatTrackerPayload(parsed, targetFormat, config.codeBlockIdentifier);
-  const updatedContent = replaceTrackerBlock(latestTrackerMessage.content, config.codeBlockIdentifier, replacement);
+  const replacement = formatTrackerPayload2(parsed, targetFormat, config.codeBlockIdentifier);
+  const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, config.codeBlockIdentifier, replacement);
   await spindle.chat.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
   lastSimStats = targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
   pushMacroValues();
@@ -14626,7 +14690,7 @@ async function handleSlashCommand(content, ctx) {
         mode: "fallback"
       });
     }
-    const block2 = formatTrackerPayload(parsed2, target, config.codeBlockIdentifier);
+    const block2 = formatTrackerPayload2(parsed2, target, config.codeBlockIdentifier);
     lastSimStats = target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2);
     pushMacroValues();
     await trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
@@ -14666,7 +14730,7 @@ async function handleSlashCommand(content, ctx) {
       mode: "fallback"
     });
   }
-  const block = formatTrackerPayload(parsed, config.trackerFormat, config.codeBlockIdentifier);
+  const block = formatTrackerPayload2(parsed, config.trackerFormat, config.codeBlockIdentifier);
   await trackEvent("sst.command.regen", { mode: "fallback", format: config.trackerFormat }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
   return buildCommandResponse({
     command: "sst-regen",
@@ -14684,31 +14748,7 @@ async function loadConfig(userId) {
       fallback: { ...DEFAULT_CONFIG },
       userId
     });
-    config = {
-      trackerTagName: sanitizeTagName(parsed.trackerTagName),
-      codeBlockIdentifier: sanitizeIdentifier(parsed.codeBlockIdentifier),
-      hideSimBlocks: sanitizeBool(parsed.hideSimBlocks, DEFAULT_CONFIG.hideSimBlocks),
-      templateId: sanitizeTemplateId(parsed.templateId),
-      trackerFormat: sanitizeTrackerFormat(parsed.trackerFormat),
-      retainTrackerCount: sanitizeRetainCount(parsed.retainTrackerCount),
-      enableInlineTemplates: sanitizeInlineEnabled(parsed.enableInlineTemplates),
-      userPresets: sanitizePresetArray(parsed.userPresets),
-      inlinePacks: sanitizeInlinePacks(parsed.inlinePacks),
-      useSecondaryLLM: sanitizeBool(parsed.useSecondaryLLM, DEFAULT_CONFIG.useSecondaryLLM),
-      secondaryLLMConnectionId: sanitizeStr(parsed.secondaryLLMConnectionId, DEFAULT_CONFIG.secondaryLLMConnectionId),
-      secondaryLLMModel: sanitizeSecondaryLLMModel(parsed.secondaryLLMModel, DEFAULT_CONFIG.secondaryLLMModel),
-      secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
-      secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
-      secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
-      fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
-      typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
-      typeSafeApiKey: "",
-      typeSafeModel: sanitizeTypeSafeModel(parsed.typeSafeModel),
-      typeSafeQuickAppend: sanitizeBool(parsed.typeSafeQuickAppend, DEFAULT_CONFIG.typeSafeQuickAppend),
-      typeSafeVerify: sanitizeBool(parsed.typeSafeVerify, DEFAULT_CONFIG.typeSafeVerify),
-      typeSafeConception: sanitizeBool(parsed.typeSafeConception, DEFAULT_CONFIG.typeSafeConception),
-      typeSafeConfidenceFloor: sanitizeConfidenceFloor(parsed.typeSafeConfidenceFloor)
-    };
+    config = normalizeStoredConfig(parsed);
     config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -14995,7 +15035,7 @@ function describeRejectedModelGuidance(model) {
   return `The provider rejected the configured model id \`${model}\`. Open SimTracker settings \u2192 Secondary LLM and confirm the override matches a model this connection can serve, or clear the override to fall back to the connection's default.`;
 }
 async function commitTrackerAppend(chatId, targetMessage, parsed, via) {
-  const trackerBlock = formatTrackerPayload(parsed, config.trackerFormat, config.codeBlockIdentifier);
+  const trackerBlock = formatTrackerPayload2(parsed, config.trackerFormat, config.codeBlockIdentifier);
   const updatedContent = `${targetMessage.content.trimEnd()}
 
 ${trackerBlock}`;
@@ -15618,31 +15658,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
       await ensureConfigForUser(userId);
       const incoming = message.config;
       const previousTypeSafeKey = config.typeSafeApiKey.trim();
-      config = {
-        trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
-        codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),
-        hideSimBlocks: sanitizeBool(incoming?.hideSimBlocks ?? config.hideSimBlocks, config.hideSimBlocks),
-        templateId: sanitizeTemplateId(incoming?.templateId ?? config.templateId),
-        trackerFormat: sanitizeTrackerFormat(incoming?.trackerFormat ?? config.trackerFormat),
-        retainTrackerCount: sanitizeRetainCount(incoming?.retainTrackerCount ?? config.retainTrackerCount),
-        enableInlineTemplates: sanitizeInlineEnabled(incoming?.enableInlineTemplates ?? config.enableInlineTemplates),
-        userPresets: sanitizePresetArray(incoming?.userPresets ?? config.userPresets),
-        inlinePacks: sanitizeInlinePacks(incoming?.inlinePacks ?? config.inlinePacks),
-        useSecondaryLLM: sanitizeBool(incoming?.useSecondaryLLM ?? config.useSecondaryLLM, config.useSecondaryLLM),
-        secondaryLLMConnectionId: sanitizeStr(incoming?.secondaryLLMConnectionId ?? config.secondaryLLMConnectionId, config.secondaryLLMConnectionId),
-        secondaryLLMModel: sanitizeSecondaryLLMModel(incoming?.secondaryLLMModel ?? config.secondaryLLMModel, config.secondaryLLMModel),
-        secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
-        secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
-        secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
-        fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
-        typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
-        typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),
-        typeSafeModel: sanitizeTypeSafeModel(incoming?.typeSafeModel ?? config.typeSafeModel),
-        typeSafeQuickAppend: sanitizeBool(incoming?.typeSafeQuickAppend ?? config.typeSafeQuickAppend, config.typeSafeQuickAppend),
-        typeSafeVerify: sanitizeBool(incoming?.typeSafeVerify ?? config.typeSafeVerify, config.typeSafeVerify),
-        typeSafeConception: sanitizeBool(incoming?.typeSafeConception ?? config.typeSafeConception, config.typeSafeConception),
-        typeSafeConfidenceFloor: sanitizeConfidenceFloor(incoming?.typeSafeConfidenceFloor ?? config.typeSafeConfidenceFloor)
-      };
+      config = mergeTrackerConfig(config, incoming);
       await syncTypeSafeKeyToEnclave(userId, config.typeSafeApiKey, previousTypeSafeKey);
       await saveConfig(userId);
       pushMacroValues();

@@ -1,10 +1,10 @@
 import { getTemplatePresetById, getTemplatePresets, mergeTemplatePresets, type TemplatePreset } from "./templatePresets";
 import { stringify as stringifyYaml } from "yaml";
 import { formatTrackerForPrompt, parseGeneratedTrackerPayload, parseTrackerPayload } from "./trackerPayload";
-import { inferExampleValue, setDeep } from "./trackerExample";
+import { buildTemplateExampleData as buildTemplateExampleDataForPreset, formatTrackerPayload as formatTrackerPayloadWithTag, replaceTrackerBlock as replaceTrackerBlockWithTag } from "./trackerCommandText";
 import { buildFirstMessageHint } from "./fertilityCycleHint";
 import { DEFAULT_CONFIG, type TrackerConfig } from "./trackerConfig";
-import { sanitizeBool, sanitizeConfidenceFloor, sanitizeFertilityCycleBias, sanitizeInlineEnabled, sanitizeMessageCount, sanitizeRetainCount, sanitizeSecondaryLLMModel, sanitizeStr, sanitizeTemperature, sanitizeTemplateId, sanitizeTrackerFormat, sanitizeTypeSafeModel } from "./backendConfig";
+import { mergeTrackerConfig, normalizeStoredConfig } from "./backendConfig";
 import { buildTrackerFenceRegex, buildTrackerTagRegex, escapeRegex, extractSimBlock, extractTrackerTag, extractTrackerTagLoose, parseTagAttributes, sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
 import { createTrackerMessageCodec } from "./trackerMessageCodec";
 import { createTrackerPromptRetention } from "./trackerPromptRetention";
@@ -542,35 +542,7 @@ function cervixStateLabel(stats: CharacterStats): string {
 }
 
 function buildTemplateExampleData(): Record<string, unknown> {
-  const preset = getActivePreset();
-  const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
-  const worldData: Record<string, unknown> = {
-    current_date: "YYYY-MM-DD",
-    current_time: "HH:MM",
-  };
-  const character: Record<string, unknown> = {
-    name: "Character Name",
-  };
-
-  for (const field of fields) {
-    const key = typeof field?.key === "string" ? field.key.trim() : "";
-    if (!key) continue;
-    const description = typeof field?.description === "string" ? field.description : "";
-    const sample = inferExampleValue(key, description);
-
-    if (key.startsWith("worldData.")) {
-      setDeep(worldData, key.slice("worldData.".length), sample);
-      continue;
-    }
-    const normalizedKey = key.replace(/^character\./i, "").replace(/^characters\[\]\./i, "");
-    if (!normalizedKey || normalizedKey.toLowerCase() === "name") continue;
-    setDeep(character, normalizedKey, sample);
-  }
-
-  return {
-    worldData,
-    characters: [character],
-  };
+  return buildTemplateExampleDataForPreset(getActivePreset());
 }
 
 function buildExampleTrackerBlock(format: "json" | "yaml", identifier: string): string {
@@ -579,10 +551,7 @@ function buildExampleTrackerBlock(format: "json" | "yaml", identifier: string): 
 }
 
 function formatTrackerPayload(data: Record<string, unknown>, format: "json" | "yaml", identifier: string): string {
-  const tagName = sanitizeTagName(config.trackerTagName);
-  const safeIdentifier = sanitizeIdentifier(identifier);
-  const body = format === "yaml" ? stringifyYaml(data).trimEnd() : JSON.stringify(data, null, 2);
-  return `<${tagName} type="${safeIdentifier}">\n${body}\n</${tagName}>`;
+  return formatTrackerPayloadWithTag(data, format, identifier, config.trackerTagName);
 }
 
 function buildCommandResponse(payload: CommandResultPayload): { type: string; payload: CommandResultPayload } {
@@ -597,21 +566,7 @@ function makeStarterTrackerBlock(): string {
 }
 
 function replaceTrackerBlock(content: string, identifier: string, replacementBlock: string): string {
-  const tagRe = buildTrackerTagRegex(config.trackerTagName, "ig");
-  const desiredType = sanitizeIdentifier(identifier);
-  let replaced = false;
-  const withTag = content.replace(tagRe, (full, attrsRaw) => {
-    const attrs = parseTagAttributes(String(attrsRaw || ""));
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== desiredType) return full;
-    if (replaced) return full;
-    replaced = true;
-    return replacementBlock;
-  });
-  if (replaced) return withTag;
-
-  const re = buildTrackerFenceRegex(identifier, "i");
-  return withTag.replace(re, replacementBlock);
+  return replaceTrackerBlockWithTag(content, identifier, replacementBlock, config.trackerTagName);
 }
 
 async function mutateChatForCommand(
@@ -889,31 +844,7 @@ async function loadConfig(userId: string): Promise<void> {
       fallback: { ...DEFAULT_CONFIG },
       userId,
     });
-    config = {
-      trackerTagName: sanitizeTagName(parsed.trackerTagName),
-      codeBlockIdentifier: sanitizeIdentifier(parsed.codeBlockIdentifier),
-      hideSimBlocks: sanitizeBool(parsed.hideSimBlocks, DEFAULT_CONFIG.hideSimBlocks),
-      templateId: sanitizeTemplateId(parsed.templateId),
-      trackerFormat: sanitizeTrackerFormat(parsed.trackerFormat),
-      retainTrackerCount: sanitizeRetainCount(parsed.retainTrackerCount),
-      enableInlineTemplates: sanitizeInlineEnabled(parsed.enableInlineTemplates),
-      userPresets: sanitizePresetArray(parsed.userPresets),
-      inlinePacks: sanitizeInlinePacks(parsed.inlinePacks),
-      useSecondaryLLM: sanitizeBool(parsed.useSecondaryLLM, DEFAULT_CONFIG.useSecondaryLLM),
-      secondaryLLMConnectionId: sanitizeStr(parsed.secondaryLLMConnectionId, DEFAULT_CONFIG.secondaryLLMConnectionId),
-      secondaryLLMModel: sanitizeSecondaryLLMModel(parsed.secondaryLLMModel, DEFAULT_CONFIG.secondaryLLMModel),
-      secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
-      secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
-      secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
-      fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
-      typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
-      typeSafeApiKey: "", // resolved from the enclave below, never from disk
-      typeSafeModel: sanitizeTypeSafeModel(parsed.typeSafeModel),
-      typeSafeQuickAppend: sanitizeBool(parsed.typeSafeQuickAppend, DEFAULT_CONFIG.typeSafeQuickAppend),
-      typeSafeVerify: sanitizeBool(parsed.typeSafeVerify, DEFAULT_CONFIG.typeSafeVerify),
-      typeSafeConception: sanitizeBool(parsed.typeSafeConception, DEFAULT_CONFIG.typeSafeConception),
-      typeSafeConfidenceFloor: sanitizeConfidenceFloor(parsed.typeSafeConfidenceFloor),
-    };
+    config = normalizeStoredConfig(parsed);
     // The TypeSafe API key lives in spindle.enclave (AES-256-GCM at rest),
     // never in preferences.json.
     config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
@@ -2185,31 +2116,7 @@ spindle.onFrontendMessage(async (payload: unknown, userId: string) => {
       await ensureConfigForUser(userId);
       const incoming = message.config as Partial<TrackerConfig>;
       const previousTypeSafeKey = config.typeSafeApiKey.trim();
-      config = {
-        trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
-        codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),
-        hideSimBlocks: sanitizeBool(incoming?.hideSimBlocks ?? config.hideSimBlocks, config.hideSimBlocks),
-        templateId: sanitizeTemplateId(incoming?.templateId ?? config.templateId),
-        trackerFormat: sanitizeTrackerFormat(incoming?.trackerFormat ?? config.trackerFormat),
-        retainTrackerCount: sanitizeRetainCount(incoming?.retainTrackerCount ?? config.retainTrackerCount),
-        enableInlineTemplates: sanitizeInlineEnabled(incoming?.enableInlineTemplates ?? config.enableInlineTemplates),
-        userPresets: sanitizePresetArray(incoming?.userPresets ?? config.userPresets),
-        inlinePacks: sanitizeInlinePacks(incoming?.inlinePacks ?? config.inlinePacks),
-        useSecondaryLLM: sanitizeBool(incoming?.useSecondaryLLM ?? config.useSecondaryLLM, config.useSecondaryLLM),
-        secondaryLLMConnectionId: sanitizeStr(incoming?.secondaryLLMConnectionId ?? config.secondaryLLMConnectionId, config.secondaryLLMConnectionId),
-        secondaryLLMModel: sanitizeSecondaryLLMModel(incoming?.secondaryLLMModel ?? config.secondaryLLMModel, config.secondaryLLMModel),
-        secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
-        secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
-        secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
-        fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
-        typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
-        typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),
-        typeSafeModel: sanitizeTypeSafeModel(incoming?.typeSafeModel ?? config.typeSafeModel),
-        typeSafeQuickAppend: sanitizeBool(incoming?.typeSafeQuickAppend ?? config.typeSafeQuickAppend, config.typeSafeQuickAppend),
-        typeSafeVerify: sanitizeBool(incoming?.typeSafeVerify ?? config.typeSafeVerify, config.typeSafeVerify),
-        typeSafeConception: sanitizeBool(incoming?.typeSafeConception ?? config.typeSafeConception, config.typeSafeConception),
-        typeSafeConfidenceFloor: sanitizeConfidenceFloor(incoming?.typeSafeConfidenceFloor ?? config.typeSafeConfidenceFloor),
-      };
+      config = mergeTrackerConfig(config, incoming);
       await syncTypeSafeKeyToEnclave(userId, config.typeSafeApiKey, previousTypeSafeKey);
       await saveConfig(userId);
       pushMacroValues();

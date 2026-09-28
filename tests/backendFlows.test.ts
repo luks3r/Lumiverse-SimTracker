@@ -48,10 +48,10 @@ beforeAll(async () => {
   await import("../src/backend.ts?backend-flows");
 });
 
-async function sendFrontend(message: FrontendMessage) {
+async function sendFrontend(message: FrontendMessage, userId = "flow-user") {
   if (!frontendHandler) throw new Error("Frontend handler missing");
   notifications.length = 0;
-  await frontendHandler(message, "flow-user");
+  await frontendHandler(message, userId);
   return notifications;
 }
 
@@ -65,6 +65,27 @@ async function waitForNotification(type: string): Promise<FrontendMessage> {
 }
 
 describe("backend host flows", () => {
+  test("saved settings normalize on load without restoring a plaintext API key", async () => {
+    storedConfig = {
+      trackerTagName: " Custom Tag! ",
+      codeBlockIdentifier: " Tracker ID! ",
+      retainTrackerCount: -4,
+      trackerFormat: "unsupported",
+      secondaryLLMModel: "model",
+      typeSafeApiKey: "plaintext-old-key",
+    };
+    const loaded = await sendFrontend({ type: "get_config" }, "legacy-config-user");
+    const config = loaded.find((message) => message.type === "config")?.config as FrontendMessage;
+    expect(config).toMatchObject({
+      trackerTagName: "customtag",
+      codeBlockIdentifier: "trackerid",
+      retainTrackerCount: 0,
+      trackerFormat: "json",
+      secondaryLLMModel: "",
+      typeSafeApiKey: "",
+    });
+  });
+
   test("settings load and save preserve normalized values without storing TypeSafe key", async () => {
     storedConfig = {};
     const initial = await sendFrontend({ type: "get_config" });
@@ -96,6 +117,40 @@ describe("backend host flows", () => {
     const result = await waitForNotification("command_result");
     expect((result.payload as FrontendMessage).ok).toBe(true);
     expect(chats.get(chatId)?.[0].content).toContain("characters:\n  - name: Alice");
+  });
+
+  test("slash add appends a starter tracker and rejects a duplicate", async () => {
+    await sendFrontend({ type: "set_config", config: { trackerFormat: "json", trackerTagName: "tracker", codeBlockIdentifier: "sim" } });
+    const chatId = "command-add-chat";
+    chats.set(chatId, [
+      { id: "assistant-1", role: "assistant", content: "Scene" },
+      { id: "user-1", role: "user", content: "/sst-add" },
+    ]);
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId, messageId: "user-1", content: "/sst-add" }, "flow-user");
+    const first = await waitForNotification("command_result");
+    expect(first.payload).toMatchObject({ command: "sst-add", ok: true, mode: "chat_mutation" });
+    expect(chats.get(chatId)?.[0].content).toContain('<tracker type="sim">');
+
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId, messageId: "user-1", content: "/sst-add" }, "flow-user");
+    const second = await waitForNotification("command_result");
+    expect(second.payload).toMatchObject({ command: "sst-add", ok: false, message: "Latest assistant message already contains a tracker tag." });
+  });
+
+  test("slash regen rewrites the latest tracker in the preferred format", async () => {
+    await sendFrontend({ type: "set_config", config: { trackerFormat: "yaml", trackerTagName: "tracker", codeBlockIdentifier: "sim" } });
+    const chatId = "command-regen-chat";
+    chats.set(chatId, [
+      { id: "assistant-1", role: "assistant", content: 'Scene\n<tracker type="sim">\n{"characters":[{"name":"Bob","hp":7}]}\n</tracker>' },
+      { id: "user-1", role: "user", content: "/sst-regen" },
+    ]);
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId, messageId: "user-1", content: "/sst-regen" }, "flow-user");
+    const result = await waitForNotification("command_result");
+    expect(result.payload).toMatchObject({ command: "sst-regen", ok: true, mode: "chat_mutation" });
+    expect(chats.get(chatId)?.[0].content).toContain("characters:\n  - name: Bob");
+    expect(chats.get(chatId)?.[0].content).toContain("hp: 7");
   });
 
   test("interceptor retains newest tracker and strips older one", async () => {
