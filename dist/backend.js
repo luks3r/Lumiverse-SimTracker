@@ -14413,7 +14413,7 @@ ${block}`;
     const replacement = formatTrackerPayload2(parsed, targetFormat, deps.readConfig().codeBlockIdentifier);
     const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, deps.readConfig().codeBlockIdentifier, replacement);
     await deps.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
-    deps.writeLastSimStats(targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2));
+    deps.writeLastSimStats(ctx.chatId, targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2), latestTrackerMessage.id);
     deps.pushMacroValues();
     await deps.trackEvent(command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen", { mode: "chat_mutation", format: targetFormat }, { chatId: ctx.chatId });
     return {
@@ -14444,7 +14444,8 @@ ${block}`;
     }
     if (command === "/sst-convert") {
       const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat;
-      if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+      const lastSimStats2 = deps.readLastSimStats(ctx.chatId);
+      if (!lastSimStats2 || lastSimStats2 === "{}") {
         return buildCommandResponse({
           command: "sst-convert",
           ok: false,
@@ -14452,7 +14453,7 @@ ${block}`;
           mode: "fallback"
         });
       }
-      const parsed2 = parseTrackerPayload(deps.readLastSimStats());
+      const parsed2 = parseTrackerPayload(lastSimStats2);
       if (!parsed2) {
         return buildCommandResponse({
           command: "sst-convert",
@@ -14462,7 +14463,7 @@ ${block}`;
         });
       }
       const block2 = formatTrackerPayload2(parsed2, target, deps.readConfig().codeBlockIdentifier);
-      deps.writeLastSimStats(target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2));
+      deps.writeLastSimStats(ctx.chatId, target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2));
       deps.pushMacroValues();
       await deps.trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
       return buildCommandResponse({
@@ -14484,7 +14485,8 @@ ${block}`;
         mode: "fallback"
       });
     }
-    if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+    const lastSimStats = deps.readLastSimStats(ctx.chatId);
+    if (!lastSimStats || lastSimStats === "{}") {
       return buildCommandResponse({
         command: "sst-regen",
         ok: false,
@@ -14492,7 +14494,7 @@ ${block}`;
         mode: "fallback"
       });
     }
-    const parsed = parseTrackerPayload(deps.readLastSimStats());
+    const parsed = parseTrackerPayload(lastSimStats);
     if (!parsed) {
       return buildCommandResponse({
         command: "sst-regen",
@@ -14976,7 +14978,9 @@ function interpretConceptionAnswers(answers, candidates, fireThreshold = CONCEPT
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
 var config = { ...DEFAULT_CONFIG };
-var lastSimStats = "{}";
+var latestTrackerByChat = new Map;
+var selectedChatId = null;
+var selectedChatKnown = false;
 var activeUserId = null;
 var loadedConfigUserId = null;
 var firstMessageFertilityHint = "";
@@ -15002,17 +15006,79 @@ var normalizeLegacyTrackersInChat = createLegacyTrackerNormalizer({
   normalizeLegacyHiddenDivTrackers,
   logInfo: (message) => spindle.log.info(message)
 });
-var { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChatTrackerHistory, getRecentChatTrackers } = createTrackerHistory({
+var {
+  recordChatTracker: recordHistoryTracker,
+  forgetChatTracker: forgetHistoryTracker,
+  getChatTrackerHistory,
+  rehydrateChatTrackerHistory: rehydrateHistory,
+  getRecentChatTrackers
+} = createTrackerHistory({
   normalizeLegacyTrackersInChat,
   extractTrackerPayloadFromMessage,
   readRetainCount: () => config.retainTrackerCount
 });
+function readLastSimStats(chatId) {
+  if (!chatId)
+    return "{}";
+  return latestTrackerByChat.get(chatId) ?? getChatTrackerHistory(chatId).at(-1)?.payload ?? "{}";
+}
+function publishSelectedTracker() {
+  spindle.updateMacroValue("last_sim_stats", formatTrackerForPrompt(readLastSimStats(selectedChatId)));
+}
+function selectChat(chatId) {
+  selectedChatKnown = true;
+  selectedChatId = chatId;
+  publishSelectedTracker();
+}
+function recordChatTracker(chatId, messageId, payload) {
+  recordHistoryTracker(chatId, messageId, payload);
+  if (!chatId)
+    return;
+  latestTrackerByChat.set(chatId, payload);
+  if (!selectedChatKnown)
+    selectChat(chatId);
+  else if (selectedChatId === chatId)
+    publishSelectedTracker();
+}
+function forgetChatTracker(chatId, messageId) {
+  forgetHistoryTracker(chatId, messageId);
+  if (!chatId)
+    return;
+  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
+  if (latest)
+    latestTrackerByChat.set(chatId, latest);
+  else
+    latestTrackerByChat.delete(chatId);
+  if (selectedChatId === chatId)
+    publishSelectedTracker();
+}
+async function rehydrateChatTrackerHistory(chatId) {
+  await rehydrateHistory(chatId);
+  if (!chatId)
+    return;
+  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
+  if (latest)
+    latestTrackerByChat.set(chatId, latest);
+  if (selectedChatId === chatId)
+    publishSelectedTracker();
+}
+function writeLastSimStats(chatId, value, messageId) {
+  if (!chatId)
+    return;
+  if (messageId) {
+    recordChatTracker(chatId, messageId, value);
+    return;
+  }
+  latestTrackerByChat.set(chatId, value);
+  if (!selectedChatKnown)
+    selectChat(chatId);
+  else if (selectedChatId === chatId)
+    publishSelectedTracker();
+}
 var { handleSlashCommand } = createCommandEngine({
   readConfig: () => config,
-  readLastSimStats: () => lastSimStats,
-  writeLastSimStats: (value) => {
-    lastSimStats = value;
-  },
+  readLastSimStats,
+  writeLastSimStats,
   getActivePreset,
   extractTrackerPayloadFromMessage,
   hasChatMutationPermission: () => hasPermission("chat_mutation"),
@@ -15183,7 +15249,6 @@ spindle.on("MESSAGE_SENT", (payload, userId) => {
     }
     const sim = extractTrackerPayloadFromMessage(message);
     if (sim) {
-      lastSimStats = sim;
       recordChatTracker(ctx.chatId, ctx.messageId, sim);
       pushMacroValues();
       await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
@@ -15200,7 +15265,6 @@ spindle.on("MESSAGE_EDITED", (payload, userId) => {
       return;
     const sim = extractTrackerPayloadFromMessage(ctx.content);
     if (sim) {
-      lastSimStats = sim;
       recordChatTracker(ctx.chatId, ctx.messageId, sim);
       pushMacroValues();
       await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier, source: "message_edited" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
@@ -15230,7 +15294,6 @@ spindle.on("MESSAGE_SWIPED", (payload, userId) => {
     const payloadText = extractTrackerPayloadFromMessage(activeContent);
     if (payloadText) {
       recordChatTracker(chatId, messageId, payloadText);
-      lastSimStats = payloadText;
       pushMacroValues();
     } else {
       forgetChatTracker(chatId, messageId);
@@ -15261,7 +15324,6 @@ spindle.on("MESSAGE_TAG_INTERCEPTED", (payload, userId) => {
     const messageId = typeof obj.messageId === "string" ? obj.messageId : null;
     if (chatId)
       activeChatId = chatId;
-    lastSimStats = content;
     recordChatTracker(chatId, messageId, content);
     pushMacroValues();
     await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier, source: "message_tag_intercepted" });
@@ -15316,7 +15378,7 @@ function pushMacroValues() {
 ` + firstMessageFertilityHint;
   }
   spindle.updateMacroValue("sim_tracker", simTracker);
-  spindle.updateMacroValue("last_sim_stats", formatTrackerForPrompt(lastSimStats || "{}"));
+  publishSelectedTracker();
 }
 var secondaryGenerationChain = Promise.resolve();
 var queuedSecondaryJobs = new Set;
@@ -15346,7 +15408,7 @@ async function commitTrackerAppend(chatId, targetMessage, parsed, via) {
 
 ${trackerBlock}`;
   await spindle.chat.updateMessage(chatId, targetMessage.id, { content: updatedContent });
-  lastSimStats = config.trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
+  const lastSimStats = config.trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
   recordChatTracker(chatId, targetMessage.id, lastSimStats);
   pushMacroValues();
   spindle.log.info(`Tracker append complete via ${via}`);
@@ -15558,6 +15620,8 @@ spindle.on("GENERATION_STARTED", (payload, userId) => {
     const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
     if (!chatId)
       return;
+    if (!selectedChatKnown)
+      selectChat(chatId);
     activeChatId = chatId;
     await rehydrateChatTrackerHistory(chatId);
     const previousHint = firstMessageFertilityHint;
@@ -15576,16 +15640,15 @@ spindle.on("GENERATION_STARTED", (payload, userId) => {
   })();
 });
 spindle.on("CHAT_SWITCHED", (payload, userId) => {
+  const obj = payload && typeof payload === "object" ? payload : {};
+  const chatId = typeof obj.chatId === "string" ? obj.chatId : typeof obj.chat_id === "string" ? obj.chat_id : null;
+  selectChat(chatId);
   (async () => {
     await ensureConfigForUser(userId);
-    if (!payload || typeof payload !== "object")
-      return;
-    const obj = payload;
-    const chatId = typeof obj.chatId === "string" ? obj.chatId : typeof obj.chat_id === "string" ? obj.chat_id : null;
     if (chatId)
       activeChatId = chatId;
     if (chatId) {
-      rehydrateChatTrackerHistory(chatId);
+      await rehydrateChatTrackerHistory(chatId);
     }
   })();
 });
@@ -15923,10 +15986,15 @@ spindle.onFrontendMessage(async (payload, userId) => {
   if (message.type === "get_latest_tracker") {
     const chatId = typeof message.chatId === "string" ? message.chatId : null;
     if (!chatId) {
+      if (!selectedChatKnown)
+        selectChat(null);
       spindle.sendToFrontend({ type: "tracker_history_latest", chatId: null, entry: null }, userId);
       return;
     }
-    activeChatId = chatId;
+    if (!selectedChatKnown)
+      selectChat(chatId);
+    if (selectedChatId === chatId)
+      activeChatId = chatId;
     await rehydrateChatTrackerHistory(chatId);
     const history = getChatTrackerHistory(chatId);
     const entry = history.length > 0 ? history[history.length - 1] : null;

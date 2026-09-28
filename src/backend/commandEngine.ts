@@ -17,8 +17,8 @@ type CommandMessage = { id: string; role: "system" | "user" | "assistant"; conte
 
 export function createCommandEngine(deps: {
   readConfig: () => Pick<TrackerConfig, "trackerFormat" | "codeBlockIdentifier" | "trackerTagName">;
-  readLastSimStats: () => string;
-  writeLastSimStats: (value: string) => void;
+  readLastSimStats: (chatId: string | null) => string;
+  writeLastSimStats: (chatId: string | null, value: string, messageId?: string | null) => void;
   getActivePreset: () => TemplatePreset;
   extractTrackerPayloadFromMessage: (content: string) => string | null;
   hasChatMutationPermission: () => boolean;
@@ -143,7 +143,7 @@ export function createCommandEngine(deps: {
     const updatedContent = replaceTrackerBlock(latestTrackerMessage.content, deps.readConfig().codeBlockIdentifier, replacement);
     await deps.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
 
-    deps.writeLastSimStats(targetFormat === "yaml" ? stringifyYaml(parsed) : JSON.stringify(parsed, null, 2));
+    deps.writeLastSimStats(ctx.chatId, targetFormat === "yaml" ? stringifyYaml(parsed) : JSON.stringify(parsed, null, 2), latestTrackerMessage.id);
     deps.pushMacroValues();
     await deps.trackEvent(
       command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen",
@@ -186,7 +186,8 @@ export function createCommandEngine(deps: {
 
     if (command === "/sst-convert") {
       const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat;
-      if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+      const lastSimStats = deps.readLastSimStats(ctx.chatId);
+      if (!lastSimStats || lastSimStats === "{}") {
         return buildCommandResponse({
           command: "sst-convert",
           ok: false,
@@ -194,7 +195,7 @@ export function createCommandEngine(deps: {
           mode: "fallback",
         });
       }
-      const parsed = parseTrackerPayload(deps.readLastSimStats());
+      const parsed = parseTrackerPayload(lastSimStats);
       if (!parsed) {
         return buildCommandResponse({
           command: "sst-convert",
@@ -204,7 +205,7 @@ export function createCommandEngine(deps: {
         });
       }
       const block = formatTrackerPayload(parsed, target, deps.readConfig().codeBlockIdentifier);
-      deps.writeLastSimStats(target === "yaml" ? stringifyYaml(parsed) : JSON.stringify(parsed, null, 2));
+      deps.writeLastSimStats(ctx.chatId, target === "yaml" ? stringifyYaml(parsed) : JSON.stringify(parsed, null, 2));
       deps.pushMacroValues();
       await deps.trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
       return buildCommandResponse({
@@ -228,7 +229,8 @@ export function createCommandEngine(deps: {
       });
     }
 
-    if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+    const lastSimStats = deps.readLastSimStats(ctx.chatId);
+    if (!lastSimStats || lastSimStats === "{}") {
       return buildCommandResponse({
         command: "sst-regen",
         ok: false,
@@ -236,7 +238,7 @@ export function createCommandEngine(deps: {
         mode: "fallback",
       });
     }
-    const parsed = parseTrackerPayload(deps.readLastSimStats());
+    const parsed = parseTrackerPayload(lastSimStats);
     if (!parsed) {
       return buildCommandResponse({
         command: "sst-regen",

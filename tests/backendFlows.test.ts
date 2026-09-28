@@ -7,6 +7,7 @@ const handlers = new Map<string, (payload: unknown, userId?: string) => void>();
 const chats = new Map<string, ChatMessage[]>();
 const notifications: FrontendMessage[] = [];
 const saved: FrontendMessage[] = [];
+const macroValues = new Map<string, string>();
 let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | null = null;
 let interceptor: ((messages: Array<Record<string, unknown>>, context: unknown) => Promise<Array<Record<string, unknown>>>) | null = null;
 let permissionChanged: ((payload: { permission: string; granted: boolean; allGranted: string[] }) => void) | null = null;
@@ -21,7 +22,7 @@ const spindle = {
   onFrontendMessage: (handler: (payload: unknown, userId: string) => Promise<void>) => { frontendHandler = handler; },
   registerInterceptor: (handler: typeof interceptor) => { interceptor = handler; },
   registerMacro: () => {},
-  updateMacroValue: () => {},
+  updateMacroValue: (name: string, value: string) => { macroValues.set(name, value); },
   sendToFrontend: (message: FrontendMessage) => { notifications.push(message); },
   manifest: { permissions: [] },
   permissions: {
@@ -226,6 +227,33 @@ describe("backend host flows", () => {
     permissionChanged?.({ permission: "chat_mutation", granted: true, allGranted: ["generation", "chat_mutation"] });
   });
 
+  test("slash fallback does not use a tracker from another chat", async () => {
+    await sendFrontend({ type: "get_config" });
+    const sourceChatId = "command-fallback-source";
+    const targetChatId = "command-fallback-target";
+    chats.set(sourceChatId, []);
+    chats.set(targetChatId, [{ id: "user-1", role: "user", content: "/sst-regen" }]);
+    handlers.get("CHAT_SWITCHED")?.({ chatId: sourceChatId }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: sourceChatId, messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":101}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handlers.get("CHAT_SWITCHED")?.({ chatId: targetChatId }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    permissionChanged?.({ permission: "chat_mutation", granted: false, allGranted: ["generation"] });
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId: targetChatId, messageId: "user-1", content: "/sst-regen" }, "flow-user");
+    const result = await waitForNotification("command_result");
+    expect(result.payload).toMatchObject({
+      command: "sst-regen", ok: false, mode: "fallback",
+      message: "No tracker tag to regenerate yet. Use /sst-add first.",
+    });
+    permissionChanged?.({ permission: "chat_mutation", granted: true, allGranted: ["generation", "chat_mutation"] });
+  });
+
   test("unknown slash command returns the established guidance", async () => {
     await sendFrontend({ type: "get_config" });
     const chatId = "command-unknown-chat";
@@ -259,6 +287,7 @@ describe("backend host flows", () => {
     await sendFrontend({ type: "get_config" });
     const chatId = "history-events-chat";
     chats.set(chatId, []);
+    handlers.get("CHAT_SWITCHED")?.({ chatId }, "flow-user");
     await sendFrontend({ type: "get_latest_tracker", chatId });
 
     handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
@@ -274,6 +303,7 @@ describe("backend host flows", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const removed = await sendFrontend({ type: "get_latest_tracker", chatId });
     expect(removed.find((message) => message.type === "tracker_history_latest")).toMatchObject({ chatId, entry: null });
+    expect(macroValues.get("last_sim_stats")).toBe("- Tracker: (none yet)");
   });
 
   test("latest tracker lookup migrates a legacy hidden block in content and swipes", async () => {
@@ -323,5 +353,95 @@ describe("backend host flows", () => {
     const latest = await sendFrontend({ type: "get_latest_tracker", chatId });
     const entry = latest.find((message) => message.type === "tracker_history_latest")?.entry as FrontendMessage;
     expect(JSON.parse(String(entry.payload)).characters[0]).toMatchObject({ conceived: true, conception_date: "2026-09-28" });
+  });
+
+  test("last_sim_stats clears when switching to a chat without a tracker", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    chats.set("macro-empty-source", []);
+    chats.set("macro-empty-target", []);
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-empty-source" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: "macro-empty-source", messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":101}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- turn: 101");
+
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-empty-target" }, "flow-user");
+    expect(macroValues.get("last_sim_stats")).toBe("- Tracker: (none yet)");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- Tracker: (none yet)");
+  });
+
+  test("last_sim_stats restores the latest tracker when switching chats", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    chats.set("macro-history-source", []);
+    const existingTracker = '<tracker type="sim">{"turn":202}</tracker>';
+    chats.set("macro-history-target", [{
+      id: "assistant-1", role: "assistant", content: existingTracker, swipes: [existingTracker], swipe_id: 0,
+    }]);
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-history-source" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: "macro-history-source", messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":101}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- turn: 101");
+
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-history-target" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- turn: 202");
+  });
+
+  test("late tracker events from another chat do not replace the active chat macro", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    chats.set("macro-late-active", []);
+    chats.set("macro-late-other", []);
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-late-active" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: "macro-late-active", messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":202}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "macro-late-active" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- turn: 202");
+
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: "macro-late-other", messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":303}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(macroValues.get("last_sim_stats")).toBe("- turn: 202");
+  });
+
+  test("late latest-tracker lookup does not reselect the previous chat", async () => {
+    await sendFrontend({ type: "get_config" });
+    const oldChatId = "macro-lookup-old";
+    const activeChatId = "macro-lookup-active";
+    chats.set(oldChatId, []);
+    chats.set(activeChatId, []);
+    handlers.get("CHAT_SWITCHED")?.({ chatId: oldChatId }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId: oldChatId, messageId: "assistant-1", tagName: "tracker",
+      attrs: { type: "sim" }, content: '{"turn":101}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handlers.get("CHAT_SWITCHED")?.({ chatId: activeChatId }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const lookup = await sendFrontend({ type: "get_latest_tracker", chatId: oldChatId });
+    expect(lookup.find((message) => message.type === "tracker_history_latest")).toMatchObject({ chatId: oldChatId });
+    expect(macroValues.get("last_sim_stats")).toBe("- Tracker: (none yet)");
   });
 });
