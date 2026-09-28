@@ -11,6 +11,7 @@ type Message = {
 };
 
 type GenerationRequest = {
+  provider?: string;
   model?: string;
   parameters?: Record<string, unknown>;
   messages: Array<{ role: string; content: string }>;
@@ -24,6 +25,7 @@ const updates: Array<{ chatId: string; messageId: string; content: string }> = [
 const notifications: Array<Record<string, unknown>> = [];
 let terminalNotification: ((message: Record<string, unknown>) => void) | null = null;
 let connectionModel = "gpt-test";
+let connectionProvider = "openai";
 let trackerFormat: "json" | "yaml" = "json";
 
 const spindle = {
@@ -56,7 +58,7 @@ const spindle = {
   },
   enclave: { get: async () => "" },
   connections: {
-    list: async () => [{ id: "conn-1", model: connectionModel, is_default: true }],
+    list: async () => [{ id: "conn-1", provider: connectionProvider, model: connectionModel, is_default: true }],
   },
   chat: {
     getMessages: async (chatId: string) => chats.get(chatId) ?? [],
@@ -69,6 +71,7 @@ const spindle = {
   generate: {
     raw: async (request: GenerationRequest) => {
       requests.push(request);
+      if (!request.provider) throw new Error(`Unknown provider: ${request.provider ?? ""}`);
       const content = outputs.shift();
       if (content === undefined) throw new Error("No mock generation output queued");
       return { content, finish_reason: "stop" };
@@ -85,13 +88,14 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; trackerFormat?: "json" | "yaml" } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; trackerFormat?: "json" | "yaml" } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
   const messageId = "assistant-1";
   const initialContent = options.initialContent ?? "Narrative beat";
   connectionModel = options.connectionModel ?? "gpt-test";
+  connectionProvider = options.connectionProvider ?? "openai";
   trackerFormat = options.trackerFormat ?? "json";
   const message: Message = {
     id: messageId,
@@ -127,6 +131,7 @@ describe("secondary generation flow", () => {
     expect(result.type).toBe("secondary_generation_complete");
     expect(requests).toHaveLength(1);
     expect(requests[0].model).toBe("gpt-test");
+    expect(requests[0].provider).toBe("openai");
     expect(requests[0].parameters?.model).toBe("gpt-test");
     expect(updates).toHaveLength(1);
     expect(message.content).toContain('<tracker type="sim">');
@@ -166,6 +171,14 @@ describe("secondary generation flow", () => {
     expect(requests).toHaveLength(0);
     expect(updates).toHaveLength(0);
     expect(message.content).toBe("Narrative beat");
+  });
+
+  test("does not call provider when selected connection lacks a provider", async () => {
+    const { result } = await runGeneration([], { connectionProvider: "" });
+
+    expect(result.type).toBe("secondary_generation_error");
+    expect(result.message).toContain("no usable provider");
+    expect(requests).toHaveLength(0);
   });
 
   test("parses YAML output and appends tracker in YAML format", async () => {

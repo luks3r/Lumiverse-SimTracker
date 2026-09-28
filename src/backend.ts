@@ -2023,11 +2023,21 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       );
       return;
     }
+    const connections = await spindle.connections.list(activeUserId || undefined);
+    const connection = config.secondaryLLMConnectionId
+      ? connections.find((item) => item.id === config.secondaryLLMConnectionId)
+      : connections.find((item) => item.is_default);
+    const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
+    if (!provider) {
+      const guidance = "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again.";
+      spindle.log.warn(guidance);
+      spindle.sendToFrontend(
+        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId },
+        activeUserId || undefined,
+      );
+      return;
+    }
     if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
-      const connections = await spindle.connections.list(activeUserId || undefined);
-      const connection = config.secondaryLLMConnectionId
-        ? connections.find((item) => item.id === config.secondaryLLMConnectionId)
-        : connections.find((item) => item.is_default);
       trimmedModel = typeof connection?.model === "string" ? connection.model.trim() : "";
     }
     if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
@@ -2095,6 +2105,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       parameters,
       connection_id: config.secondaryLLMConnectionId || undefined,
       userId: activeUserId || undefined,
+      provider,
       model: trimmedModel,
     };
     const result = await spindle.generate.raw(generationRequest as Parameters<typeof spindle.generate.raw>[0]);
