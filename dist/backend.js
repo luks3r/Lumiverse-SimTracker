@@ -13051,6 +13051,49 @@ function inferExampleValue(key, description) {
   return "";
 }
 
+// src/fertilityCycleHint.ts
+function pickInitialCycleState(bias) {
+  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+  switch (bias) {
+    case "menstruating": {
+      const day = roll(1, 5);
+      return { day, description: `menstruating (cycle_stage_id 1)` };
+    }
+    case "start_follicular": {
+      const day = roll(6, 10);
+      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
+    }
+    case "close_ovulation": {
+      const day = roll(11, 13);
+      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
+    }
+    case "ovulating": {
+      const day = roll(14, 16);
+      return { day, description: `ovulating (cycle_stage_id 3)` };
+    }
+    case "start_luteal": {
+      const day = roll(17, 21);
+      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
+    }
+    case "end_luteal": {
+      const day = roll(24, 28);
+      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
+    }
+    case "random":
+    default: {
+      const day = roll(1, 28);
+      return { day, description: "" };
+    }
+  }
+}
+function buildFirstMessageHint(bias) {
+  const { day, description } = pickInitialCycleState(bias);
+  if (!description && bias !== "random")
+    return "";
+  const qualifier = description ? `, ${description}` : "";
+  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
+}
+
 // src/trackerData.ts
 function normalizeTrackerData(data) {
   if (Array.isArray(data.characters)) {
@@ -14963,47 +15006,6 @@ ${describeRejectedModelGuidance(trimmedModel)}` : rawMessage;
     spindle.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, activeUserId || undefined);
     await trackEvent("sst.secondary_generation.failed", { error: rawMessage }, { level: "error" });
   }
-}
-function pickInitialCycleState(bias) {
-  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
-  switch (bias) {
-    case "menstruating": {
-      const day = roll(1, 5);
-      return { day, description: `menstruating (cycle_stage_id 1)` };
-    }
-    case "start_follicular": {
-      const day = roll(6, 10);
-      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
-    }
-    case "close_ovulation": {
-      const day = roll(11, 13);
-      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
-    }
-    case "ovulating": {
-      const day = roll(14, 16);
-      return { day, description: `ovulating (cycle_stage_id 3)` };
-    }
-    case "start_luteal": {
-      const day = roll(17, 21);
-      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
-    }
-    case "end_luteal": {
-      const day = roll(24, 28);
-      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
-    }
-    case "random":
-    default: {
-      const day = roll(1, 28);
-      return { day, description: "" };
-    }
-  }
-}
-function buildFirstMessageHint(bias) {
-  const { day, description } = pickInitialCycleState(bias);
-  if (!description && bias !== "random")
-    return "";
-  const qualifier = description ? `, ${description}` : "";
-  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
 }
 spindle.on("GENERATION_STARTED", (payload, userId) => {
   (async () => {
