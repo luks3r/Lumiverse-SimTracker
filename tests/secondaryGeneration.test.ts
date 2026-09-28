@@ -28,7 +28,9 @@ let terminalNotification: ((message: Record<string, unknown>) => void) | null = 
 let connectionModel = "gpt-test";
 let connectionProvider = "openai";
 let selectedConnectionId = "conn-1";
+let selectedModelOverride = "";
 let trackerFormat: "json" | "yaml" = "json";
+let retainTrackerCount = 0;
 
 const spindle = {
   frontendCapabilities: { declare: () => () => {} },
@@ -52,8 +54,8 @@ const spindle = {
     getJson: async () => ({
       useSecondaryLLM: true,
       secondaryLLMConnectionId: selectedConnectionId,
-      secondaryLLMModel: "",
-      retainTrackerCount: 0,
+      secondaryLLMModel: selectedModelOverride,
+      retainTrackerCount,
       trackerFormat,
       typeSafeEnabled: false,
     }),
@@ -91,7 +93,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; trackerFormat?: "json" | "yaml" } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -100,7 +102,9 @@ async function runGeneration(
   connectionModel = options.connectionModel ?? "gpt-test";
   connectionProvider = options.connectionProvider ?? "openai";
   selectedConnectionId = options.selectedConnectionId ?? "conn-1";
+  selectedModelOverride = options.selectedModelOverride ?? "";
   trackerFormat = options.trackerFormat ?? "json";
+  retainTrackerCount = options.retainTrackerCount ?? 0;
   const message: Message = {
     id: messageId,
     role: "assistant",
@@ -110,7 +114,12 @@ async function runGeneration(
     swipe_dates: [],
     extra: {},
   };
-  chats.set(chatId, [message]);
+  const priorTrackers = options.priorTrackers ?? (options.priorTracker ? [options.priorTracker] : []);
+  const priorMessages: Message[] = priorTrackers.map((tracker, index) => {
+    const content = `<tracker type="sim">${tracker}</tracker>`;
+    return { id: `assistant-prior-${index}`, role: "assistant", content, swipes: [content], swipe_id: 0, swipe_dates: [], extra: {} };
+  });
+  chats.set(chatId, [...priorMessages, message]);
   outputs.splice(0, outputs.length, ...responseTexts);
   requests.length = 0;
   updates.length = 0;
@@ -148,6 +157,16 @@ describe("secondary generation flow", () => {
 
     expect(result.type).toBe("secondary_generation_complete");
     expect(requests[0].connection_id).toBe("conn-1");
+  });
+
+  test("explicit model override wins over the connection default", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      connectionModel: "connection-default",
+      selectedModelOverride: "  custom-model  ",
+    });
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].model).toBe("custom-model");
+    expect(requests[0].parameters?.model).toBe("custom-model");
   });
 
   test("repairs invalid output once, then appends corrected tracker", async () => {
@@ -203,5 +222,30 @@ describe("secondary generation flow", () => {
     expect(requests).toHaveLength(1);
     expect(message.content).toContain('worldData:\n  current_date: 2025-08-10');
     expect(message.content).toContain('  - name: Alice');
+  });
+
+  test("provider prompt includes prior tracker state but strips tracker markup from conversation", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      priorTracker: '{"worldData":{"turn":1},"characters":[]}',
+      retainTrackerCount: 1,
+    });
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Previous tracker state:");
+    expect(prompt).toContain("turn: 1");
+    expect(prompt).toContain("Narrative beat");
+    expect(prompt.split("Recent conversation:\n\n")[1]).not.toContain('<tracker type="sim">');
+  });
+
+  test("provider prompt orders multiple retained states oldest to newest", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      priorTrackers: ['{"worldData":{"turn":1},"characters":[]}', '{"worldData":{"turn":2},"characters":[]}'],
+      retainTrackerCount: 2,
+    });
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Previous tracker states (oldest → most recent, 2 shown)");
+    expect(prompt.indexOf("--- 1 turn ago ---")).toBeLessThan(prompt.indexOf("--- Most recent ---"));
+    expect(prompt.indexOf("turn: 1")).toBeLessThan(prompt.indexOf("turn: 2"));
   });
 });

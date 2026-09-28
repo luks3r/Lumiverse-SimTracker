@@ -10,6 +10,7 @@ import { createInlineTemplateProcessor } from "./inlineTemplates";
 import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "./trackerConfig";
 import { createFrontendMessageSyntax, readMessageContext } from "./frontendMessageSyntax";
 import { sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import { buildSavedFrontendConfig } from "./frontendSettingsValues";
 
 type ConnectionProfile = {
   id: string;
@@ -28,23 +29,6 @@ function byId<T extends Element>(id: string): T | null {
   const scoped = panelRoot?.querySelector(`#${id}`) as T | null;
   if (scoped) return scoped;
   return document.getElementById(id) as T | null;
-}
-
-function sanitizeRetainCount(value: string): number {
-  const num = Number(value);
-  if (Number.isNaN(num)) return 3;
-  return Math.max(0, Math.min(20, Math.floor(num)));
-}
-
-// Mirror backend.ts sanitizeSecondaryLLMModel — coerce known placeholder
-// strings to "" so the field doesn't silently 400 the provider with
-// model:"string" when the user enables the sidecar without filling it in.
-const SECONDARY_LLM_MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
-
-function sanitizeSecondaryLLMModel(value: unknown): string {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  return SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmed.toLowerCase()) ? "" : trimmed;
 }
 
 function getAllPresets(config: TrackerConfig): TemplatePreset[] {
@@ -1398,32 +1382,29 @@ export function setup(ctx: SpindleFrontendContext) {
     const tsConception = byId<HTMLInputElement>("sst-lumi-ts-conception");
     const tsConfidence = byId<HTMLInputElement>("sst-lumi-ts-confidence");
 
-    config = {
-      ...config,
-      templateId: selectedTemplate,
-      trackerTagName: sanitizeTagName(tagInput?.value || "tracker"),
-      codeBlockIdentifier: sanitizeIdentifier(identifierInput?.value || fallbackId || "sim"),
-      hideSimBlocks: Boolean(hideInput?.checked),
-      enableInlineTemplates: Boolean(inlineInput?.checked),
-      trackerFormat: formatSelect?.value === "yaml" ? "yaml" : "json",
-      retainTrackerCount: sanitizeRetainCount(retainInput?.value || "3"),
-      useSecondaryLLM: Boolean(llmEnable?.checked),
-      secondaryLLMConnectionId: llmConnection?.value || "",
-      secondaryLLMModel: sanitizeSecondaryLLMModel(modelCombobox?.getValue() ?? ""),
-      secondaryLLMMessageCount: Math.max(1, Math.min(50, Math.floor(Number(llmMsgCount?.value) || 5))),
-      secondaryLLMTemperature: Math.max(0, Math.min(2, Number(llmTemp?.value) || 0.7)),
-      secondaryLLMStripHTML: Boolean(llmStrip?.checked),
-      fertilityCycleBias: (FERTILITY_CYCLE_BIAS_VALUES as readonly string[]).includes(cycleBiasSelect?.value || "")
-        ? (cycleBiasSelect!.value as FertilityCycleBias)
-        : DEFAULT_CONFIG.fertilityCycleBias,
-      typeSafeEnabled: Boolean(tsEnable?.checked),
-      typeSafeApiKey: (tsKey?.value || "").trim(),
-      typeSafeModel: (tsModel?.value || "").trim() || DEFAULT_CONFIG.typeSafeModel,
-      typeSafeQuickAppend: Boolean(tsQuick?.checked),
-      typeSafeVerify: Boolean(tsVerify?.checked),
-      typeSafeConception: Boolean(tsConception?.checked),
-      typeSafeConfidenceFloor: Math.min(0.95, Math.max(0.3, Number(tsConfidence?.value) || DEFAULT_CONFIG.typeSafeConfidenceFloor)),
-    };
+    config = buildSavedFrontendConfig(config, {
+      selectedTemplate,
+      tag: tagInput?.value,
+      identifier: identifierInput?.value,
+      hide: hideInput?.checked,
+      inline: inlineInput?.checked,
+      format: formatSelect?.value,
+      retain: retainInput?.value,
+      llmEnable: llmEnable?.checked,
+      llmConnection: llmConnection?.value,
+      llmModel: modelCombobox?.getValue(),
+      llmMsgCount: llmMsgCount?.value,
+      llmTemp: llmTemp?.value,
+      llmStrip: llmStrip?.checked,
+      cycleBias: cycleBiasSelect?.value,
+      tsEnable: tsEnable?.checked,
+      tsKey: tsKey?.value,
+      tsModel: tsModel?.value,
+      tsQuick: tsQuick?.checked,
+      tsVerify: tsVerify?.checked,
+      tsConception: tsConception?.checked,
+      tsConfidence: tsConfidence?.value,
+    }, fallbackId);
     persistConfig();
     configTrackerTagNameHint = config.trackerTagName;
     applyTagInterceptor();

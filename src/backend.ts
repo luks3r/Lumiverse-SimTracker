@@ -13,6 +13,9 @@ import { createLegacyTrackerNormalizer } from "./trackerLegacyMigration";
 import { buildConceptionDirective, latestNarrativeBeat, planForcedConception, rewriteTrackerInMessages, type ConceptionMutation } from "./conceptionFlow";
 import { discoverSeededPresets } from "./seededPresets";
 import { buildImportedPreset, isInlinePackOnly } from "./importedPreset";
+import { buildSecondaryPrompt } from "./secondaryPrompt";
+import { collectSecondaryHistory } from "./secondaryHistory";
+import { resolveSecondaryConnection } from "./secondaryConnection";
 import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "./secondaryPromptText";
 import { readMessageContext, type MessageContext } from "./backendMessageContext";
 import { CONCEPTION_CONFIG, coinFlip, extractCurrentDate, getCharactersFromPayload, isAlreadyConceivedOrPregnant, isFemaleOrFuta, isInFertileWindow, type CharacterStats } from "./conceptionRules";
@@ -905,12 +908,6 @@ function enqueueSecondaryGeneration(chatId: string, messageId: string): Promise<
   return secondaryGenerationChain;
 }
 
-// Provider placeholder values that look like a real model field but aren't.
-// Spindle's connection-profile UI seeds the model textbox with "string" as a
-// schema placeholder; if the user enables the secondary LLM without filling
-// that in, the request hits the provider with model:"string" and 400s.
-const SECONDARY_LLM_MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
-
 function describeMissingModelGuidance(): string {
   return "The selected connection has no usable default model. Choose a model in SimTracker settings → Secondary LLM, or select a connection with a configured model.";
 }
@@ -988,7 +985,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
     const preset = getActivePreset();
     const systemPrompt = preset.sysPrompt || "";
     const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-    let processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
+    const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
 
     const tagName = sanitizeTagName(config.trackerTagName);
     const identifier = config.codeBlockIdentifier;
@@ -1008,25 +1005,13 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
     //
     // Honour the user's "Retain N trackers" setting exactly: 0 means no
     // prior context, anything ≥1 caps at 10 to keep the prompt bounded.
-    const retainSetting = Number.isFinite(config.retainTrackerCount) ? config.retainTrackerCount : 3;
-    const historyLimit = Math.max(0, Math.min(10, retainSetting));
-    let historicalTrackers = historyLimit === 0
-      ? []
-      : getRecentChatTrackers(chatId, historyLimit, targetMessageId).map((entry) => entry.payload);
-
-    if (historyLimit > 0 && historicalTrackers.length === 0) {
-      // Fallback: scan the entire chat (not just the recentMessages window)
-      // for tracker blocks embedded in message content.
-      const nonSystem = messages.filter((m) => m.role !== "system");
-      const targetIdx = nonSystem.findIndex((m) => m.id === targetMessageId);
-      const scanEnd = targetIdx >= 0 ? targetIdx : nonSystem.length;
-      const found: string[] = [];
-      for (let i = scanEnd - 1; i >= 0 && found.length < historyLimit; i -= 1) {
-        const payload = extractTrackerPayloadFromMessage(nonSystem[i].content);
-        if (payload) found.unshift(payload); // oldest → newest
-      }
-      historicalTrackers = found;
-    }
+    const historicalTrackers = collectSecondaryHistory({
+      retainTrackerCount: config.retainTrackerCount,
+      targetMessageId,
+      messages,
+      getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
+      extractTrackerPayloadFromMessage,
+    });
 
     // ── TypeSafe fast lane: gate + quick append ────────────────────────
     //
@@ -1108,12 +1093,12 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       return;
     }
     const connections = await spindle.connections.list(activeUserId || undefined);
-    const connection = config.secondaryLLMConnectionId
-      ? connections.find((item) => item.id === config.secondaryLLMConnectionId)
-      : connections.find((item) => item.is_default);
-    const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
-    if (!connection || !provider) {
-      const guidance = "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again.";
+    const route = resolveSecondaryConnection(connections, config.secondaryLLMConnectionId, trimmedModel);
+    trimmedModel = route.model;
+    if (!route.ok) {
+      const guidance = route.reason === "provider"
+        ? "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again."
+        : describeMissingModelGuidance();
       spindle.log.warn(guidance);
       spindle.sendToFrontend(
         { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId },
@@ -1121,48 +1106,17 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       );
       return;
     }
-    if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
-      trimmedModel = typeof connection?.model === "string" ? connection.model.trim() : "";
-    }
-    if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
-      const guidance = describeMissingModelGuidance();
-      spindle.log.warn(guidance);
-      spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId },
-        activeUserId || undefined,
-      );
-      return;
-    }
+    const { connection, provider } = route;
 
-    const tagRe = buildTrackerTagRegex(tagName, "ig");
-    const fenceRe = buildTrackerFenceRegex(identifier, "gi");
-    const cleanedMessages = recentMessages.map((msg) => {
-      let content = msg.content;
-      content = content.replace(tagRe, "").trim();
-      content = content.replace(fenceRe, "").trim();
-      if (config.secondaryLLMStripHTML) {
-        content = stripStructuralHTML(content);
-      }
-      return { role: msg.role, content };
+    const { cleanedMessages, conversationText } = buildSecondaryPrompt({
+      processedPrompt,
+      historicalTrackers,
+      recentMessages,
+      tagName,
+      identifier,
+      stripHTML: config.secondaryLLMStripHTML,
+      trackerFormat: config.trackerFormat,
     });
-
-    let conversationText = processedPrompt + "\n\n";
-    if (historicalTrackers.length === 1) {
-      conversationText += "Previous tracker state:\n" + formatTrackerForPrompt(historicalTrackers[0]) + "\n\n";
-    } else if (historicalTrackers.length > 1) {
-      conversationText += `Previous tracker states (oldest → most recent, ${historicalTrackers.length} shown):\n\n`;
-      historicalTrackers.forEach((snap, idx) => {
-        const stepsBack = historicalTrackers.length - 1 - idx;
-        const label = stepsBack === 0 ? "Most recent" : `${stepsBack} turn${stepsBack === 1 ? "" : "s"} ago`;
-        conversationText += `--- ${label} ---\n${formatTrackerForPrompt(snap)}\n\n`;
-      });
-    }
-    conversationText += "Recent conversation:\n\n";
-    for (const msg of cleanedMessages) {
-      conversationText += `${msg.role === "user" ? "User" : "Character"}: ${msg.content}\n\n`;
-    }
-    const hasHistory = historicalTrackers.length > 0;
-    conversationText += `\nBased on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${config.trackerFormat.toUpperCase()} data (without code fences or backticks). ${hasHistory ? "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes — keep unchanged fields stable so the tracker progression stays consistent. " : ""}Output ONLY the ${config.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
 
     const llmMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
       { role: "user", content: conversationText },

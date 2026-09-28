@@ -19720,16 +19720,7 @@ function sanitizeTagName2(value) {
   return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
 }
 
-// src/frontend.ts
-var BUILTIN_PRESETS = getTemplatePresets();
-var runtimeSeededPresets = [];
-var panelRoot = null;
-function byId(id) {
-  const scoped = panelRoot?.querySelector(`#${id}`);
-  if (scoped)
-    return scoped;
-  return document.getElementById(id);
-}
+// src/frontendSettingsValues.ts
 function sanitizeRetainCount(value) {
   const num = Number(value);
   if (Number.isNaN(num))
@@ -19742,6 +19733,43 @@ function sanitizeSecondaryLLMModel(value) {
     return "";
   const trimmed = value.trim();
   return SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmed.toLowerCase()) ? "" : trimmed;
+}
+function buildSavedFrontendConfig(config, values, fallbackId) {
+  return {
+    ...config,
+    templateId: values.selectedTemplate || DEFAULT_CONFIG.templateId,
+    trackerTagName: sanitizeTagName2(values.tag || "tracker"),
+    codeBlockIdentifier: sanitizeIdentifier2(values.identifier || fallbackId || "sim"),
+    hideSimBlocks: Boolean(values.hide),
+    enableInlineTemplates: Boolean(values.inline),
+    trackerFormat: values.format === "yaml" ? "yaml" : "json",
+    retainTrackerCount: sanitizeRetainCount(values.retain || "3"),
+    useSecondaryLLM: Boolean(values.llmEnable),
+    secondaryLLMConnectionId: values.llmConnection || "",
+    secondaryLLMModel: sanitizeSecondaryLLMModel(values.llmModel ?? ""),
+    secondaryLLMMessageCount: Math.max(1, Math.min(50, Math.floor(Number(values.llmMsgCount) || 5))),
+    secondaryLLMTemperature: Math.max(0, Math.min(2, Number(values.llmTemp) || 0.7)),
+    secondaryLLMStripHTML: Boolean(values.llmStrip),
+    fertilityCycleBias: FERTILITY_CYCLE_BIAS_VALUES.includes(values.cycleBias || "") ? values.cycleBias : DEFAULT_CONFIG.fertilityCycleBias,
+    typeSafeEnabled: Boolean(values.tsEnable),
+    typeSafeApiKey: (values.tsKey || "").trim(),
+    typeSafeModel: (values.tsModel || "").trim() || DEFAULT_CONFIG.typeSafeModel,
+    typeSafeQuickAppend: Boolean(values.tsQuick),
+    typeSafeVerify: Boolean(values.tsVerify),
+    typeSafeConception: Boolean(values.tsConception),
+    typeSafeConfidenceFloor: Math.min(0.95, Math.max(0.3, Number(values.tsConfidence) || DEFAULT_CONFIG.typeSafeConfidenceFloor))
+  };
+}
+
+// src/frontend.ts
+var BUILTIN_PRESETS = getTemplatePresets();
+var runtimeSeededPresets = [];
+var panelRoot = null;
+function byId(id) {
+  const scoped = panelRoot?.querySelector(`#${id}`);
+  if (scoped)
+    return scoped;
+  return document.getElementById(id);
 }
 function getAllPresets(config) {
   return mergeTemplatePresets(BUILTIN_PRESETS, runtimeSeededPresets, config.userPresets);
@@ -20915,30 +20943,29 @@ function setup(ctx) {
     const tsVerify = byId("sst-lumi-ts-verify");
     const tsConception = byId("sst-lumi-ts-conception");
     const tsConfidence = byId("sst-lumi-ts-confidence");
-    config = {
-      ...config,
-      templateId: selectedTemplate,
-      trackerTagName: sanitizeTagName2(tagInput?.value || "tracker"),
-      codeBlockIdentifier: sanitizeIdentifier2(identifierInput?.value || fallbackId || "sim"),
-      hideSimBlocks: Boolean(hideInput?.checked),
-      enableInlineTemplates: Boolean(inlineInput?.checked),
-      trackerFormat: formatSelect?.value === "yaml" ? "yaml" : "json",
-      retainTrackerCount: sanitizeRetainCount(retainInput?.value || "3"),
-      useSecondaryLLM: Boolean(llmEnable?.checked),
-      secondaryLLMConnectionId: llmConnection?.value || "",
-      secondaryLLMModel: sanitizeSecondaryLLMModel(modelCombobox?.getValue() ?? ""),
-      secondaryLLMMessageCount: Math.max(1, Math.min(50, Math.floor(Number(llmMsgCount?.value) || 5))),
-      secondaryLLMTemperature: Math.max(0, Math.min(2, Number(llmTemp?.value) || 0.7)),
-      secondaryLLMStripHTML: Boolean(llmStrip?.checked),
-      fertilityCycleBias: FERTILITY_CYCLE_BIAS_VALUES.includes(cycleBiasSelect?.value || "") ? cycleBiasSelect.value : DEFAULT_CONFIG.fertilityCycleBias,
-      typeSafeEnabled: Boolean(tsEnable?.checked),
-      typeSafeApiKey: (tsKey?.value || "").trim(),
-      typeSafeModel: (tsModel?.value || "").trim() || DEFAULT_CONFIG.typeSafeModel,
-      typeSafeQuickAppend: Boolean(tsQuick?.checked),
-      typeSafeVerify: Boolean(tsVerify?.checked),
-      typeSafeConception: Boolean(tsConception?.checked),
-      typeSafeConfidenceFloor: Math.min(0.95, Math.max(0.3, Number(tsConfidence?.value) || DEFAULT_CONFIG.typeSafeConfidenceFloor))
-    };
+    config = buildSavedFrontendConfig(config, {
+      selectedTemplate,
+      tag: tagInput?.value,
+      identifier: identifierInput?.value,
+      hide: hideInput?.checked,
+      inline: inlineInput?.checked,
+      format: formatSelect?.value,
+      retain: retainInput?.value,
+      llmEnable: llmEnable?.checked,
+      llmConnection: llmConnection?.value,
+      llmModel: modelCombobox?.getValue(),
+      llmMsgCount: llmMsgCount?.value,
+      llmTemp: llmTemp?.value,
+      llmStrip: llmStrip?.checked,
+      cycleBias: cycleBiasSelect?.value,
+      tsEnable: tsEnable?.checked,
+      tsKey: tsKey?.value,
+      tsModel: tsModel?.value,
+      tsQuick: tsQuick?.checked,
+      tsVerify: tsVerify?.checked,
+      tsConception: tsConception?.checked,
+      tsConfidence: tsConfidence?.value
+    }, fallbackId);
     persistConfig();
     configTrackerTagNameHint = config.trackerTagName;
     applyTagInterceptor();

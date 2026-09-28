@@ -14120,6 +14120,92 @@ function stripStructuralHTML(text) {
   return stripped.replace(/\s+/g, " ").trim();
 }
 
+// src/secondaryPrompt.ts
+function buildSecondaryPrompt(options) {
+  const tagRe = buildTrackerTagRegex(options.tagName, "ig");
+  const fenceRe = buildTrackerFenceRegex(options.identifier, "gi");
+  const cleanedMessages = options.recentMessages.map((msg) => {
+    let content = msg.content;
+    content = content.replace(tagRe, "").trim();
+    content = content.replace(fenceRe, "").trim();
+    if (options.stripHTML) {
+      content = stripStructuralHTML(content);
+    }
+    return { role: msg.role, content };
+  });
+  let conversationText = options.processedPrompt + `
+
+`;
+  const historicalTrackers = options.historicalTrackers;
+  if (historicalTrackers.length === 1) {
+    conversationText += `Previous tracker state:
+` + formatTrackerForPrompt(historicalTrackers[0]) + `
+
+`;
+  } else if (historicalTrackers.length > 1) {
+    conversationText += `Previous tracker states (oldest \u2192 most recent, ${historicalTrackers.length} shown):
+
+`;
+    historicalTrackers.forEach((snap, idx) => {
+      const stepsBack = historicalTrackers.length - 1 - idx;
+      const label = stepsBack === 0 ? "Most recent" : `${stepsBack} turn${stepsBack === 1 ? "" : "s"} ago`;
+      conversationText += `--- ${label} ---
+${formatTrackerForPrompt(snap)}
+
+`;
+    });
+  }
+  conversationText += `Recent conversation:
+
+`;
+  for (const msg of cleanedMessages) {
+    conversationText += `${msg.role === "user" ? "User" : "Character"}: ${msg.content}
+
+`;
+  }
+  const hasHistory = historicalTrackers.length > 0;
+  conversationText += `
+Based on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${options.trackerFormat.toUpperCase()} data (without code fences or backticks). ${hasHistory ? "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes \u2014 keep unchanged fields stable so the tracker progression stays consistent. " : ""}Output ONLY the ${options.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
+  return { cleanedMessages, conversationText };
+}
+
+// src/secondaryHistory.ts
+function collectSecondaryHistory(options) {
+  const retainSetting = Number.isFinite(options.retainTrackerCount) ? options.retainTrackerCount : 3;
+  const historyLimit = Math.max(0, Math.min(10, retainSetting));
+  let historicalTrackers = historyLimit === 0 ? [] : options.getRecentPayloads(historyLimit, options.targetMessageId);
+  if (historyLimit > 0 && historicalTrackers.length === 0) {
+    const nonSystem = options.messages.filter((m) => m.role !== "system");
+    const targetIdx = nonSystem.findIndex((m) => m.id === options.targetMessageId);
+    const scanEnd = targetIdx >= 0 ? targetIdx : nonSystem.length;
+    const found = [];
+    for (let i = scanEnd - 1;i >= 0 && found.length < historyLimit; i -= 1) {
+      const payload = options.extractTrackerPayloadFromMessage(nonSystem[i].content);
+      if (payload)
+        found.unshift(payload);
+    }
+    historicalTrackers = found;
+  }
+  return historicalTrackers;
+}
+
+// src/secondaryConnection.ts
+var MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
+function resolveSecondaryConnection(connections, selectedConnectionId, configuredModel) {
+  const connection = selectedConnectionId ? connections.find((item) => item.id === selectedConnectionId) : connections.find((item) => item.is_default);
+  const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
+  if (!connection || !provider)
+    return { ok: false, reason: "provider", model: configuredModel };
+  let model = configuredModel;
+  if (MODEL_PLACEHOLDERS.has(model.toLowerCase())) {
+    model = typeof connection.model === "string" ? connection.model.trim() : "";
+  }
+  if (MODEL_PLACEHOLDERS.has(model.toLowerCase())) {
+    return { ok: false, reason: "model", model };
+  }
+  return { ok: true, connection, provider, model };
+}
+
 // src/backendMessageContext.ts
 function readMessageContext(payload) {
   if (!payload || typeof payload !== "object") {
@@ -15075,7 +15161,6 @@ function enqueueSecondaryGeneration(chatId, messageId) {
   });
   return secondaryGenerationChain;
 }
-var SECONDARY_LLM_MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
 function describeMissingModelGuidance() {
   return "The selected connection has no usable default model. Choose a model in SimTracker settings \u2192 Secondary LLM, or select a connection with a configured model.";
 }
@@ -15126,26 +15211,18 @@ async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
     const preset = getActivePreset();
     const systemPrompt = preset.sysPrompt || "";
     const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-    let processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
+    const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
     const tagName = sanitizeTagName(config.trackerTagName);
     const identifier = config.codeBlockIdentifier;
     const messageCount = config.secondaryLLMMessageCount;
     const recentMessages = messages.filter((m) => m.role !== "system").slice(-messageCount);
-    const retainSetting = Number.isFinite(config.retainTrackerCount) ? config.retainTrackerCount : 3;
-    const historyLimit = Math.max(0, Math.min(10, retainSetting));
-    let historicalTrackers = historyLimit === 0 ? [] : getRecentChatTrackers(chatId, historyLimit, targetMessageId).map((entry) => entry.payload);
-    if (historyLimit > 0 && historicalTrackers.length === 0) {
-      const nonSystem = messages.filter((m) => m.role !== "system");
-      const targetIdx = nonSystem.findIndex((m) => m.id === targetMessageId);
-      const scanEnd = targetIdx >= 0 ? targetIdx : nonSystem.length;
-      const found = [];
-      for (let i = scanEnd - 1;i >= 0 && found.length < historyLimit; i -= 1) {
-        const payload = extractTrackerPayloadFromMessage(nonSystem[i].content);
-        if (payload)
-          found.unshift(payload);
-      }
-      historicalTrackers = found;
-    }
+    const historicalTrackers = collectSecondaryHistory({
+      retainTrackerCount: config.retainTrackerCount,
+      targetMessageId,
+      messages,
+      getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
+      extractTrackerPayloadFromMessage
+    });
     if (config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
       const previousPayload = historicalTrackers.length > 0 ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]) : null;
       if (previousPayload) {
@@ -15194,66 +15271,24 @@ async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
       return;
     }
     const connections = await spindle.connections.list(activeUserId || undefined);
-    const connection = config.secondaryLLMConnectionId ? connections.find((item) => item.id === config.secondaryLLMConnectionId) : connections.find((item) => item.is_default);
-    const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
-    if (!connection || !provider) {
-      const guidance = "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again.";
+    const route = resolveSecondaryConnection(connections, config.secondaryLLMConnectionId, trimmedModel);
+    trimmedModel = route.model;
+    if (!route.ok) {
+      const guidance = route.reason === "provider" ? "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again." : describeMissingModelGuidance();
       spindle.log.warn(guidance);
       spindle.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, activeUserId || undefined);
       return;
     }
-    if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
-      trimmedModel = typeof connection?.model === "string" ? connection.model.trim() : "";
-    }
-    if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
-      const guidance = describeMissingModelGuidance();
-      spindle.log.warn(guidance);
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, activeUserId || undefined);
-      return;
-    }
-    const tagRe = buildTrackerTagRegex(tagName, "ig");
-    const fenceRe = buildTrackerFenceRegex(identifier, "gi");
-    const cleanedMessages = recentMessages.map((msg) => {
-      let content = msg.content;
-      content = content.replace(tagRe, "").trim();
-      content = content.replace(fenceRe, "").trim();
-      if (config.secondaryLLMStripHTML) {
-        content = stripStructuralHTML(content);
-      }
-      return { role: msg.role, content };
+    const { connection, provider } = route;
+    const { cleanedMessages, conversationText } = buildSecondaryPrompt({
+      processedPrompt,
+      historicalTrackers,
+      recentMessages,
+      tagName,
+      identifier,
+      stripHTML: config.secondaryLLMStripHTML,
+      trackerFormat: config.trackerFormat
     });
-    let conversationText = processedPrompt + `
-
-`;
-    if (historicalTrackers.length === 1) {
-      conversationText += `Previous tracker state:
-` + formatTrackerForPrompt(historicalTrackers[0]) + `
-
-`;
-    } else if (historicalTrackers.length > 1) {
-      conversationText += `Previous tracker states (oldest \u2192 most recent, ${historicalTrackers.length} shown):
-
-`;
-      historicalTrackers.forEach((snap, idx) => {
-        const stepsBack = historicalTrackers.length - 1 - idx;
-        const label = stepsBack === 0 ? "Most recent" : `${stepsBack} turn${stepsBack === 1 ? "" : "s"} ago`;
-        conversationText += `--- ${label} ---
-${formatTrackerForPrompt(snap)}
-
-`;
-      });
-    }
-    conversationText += `Recent conversation:
-
-`;
-    for (const msg of cleanedMessages) {
-      conversationText += `${msg.role === "user" ? "User" : "Character"}: ${msg.content}
-
-`;
-    }
-    const hasHistory = historicalTrackers.length > 0;
-    conversationText += `
-Based on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${config.trackerFormat.toUpperCase()} data (without code fences or backticks). ${hasHistory ? "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes \u2014 keep unchanged fields stable so the tracker progression stays consistent. " : ""}Output ONLY the ${config.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
     const llmMessages = [
       { role: "user", content: conversationText }
     ];
