@@ -39,6 +39,12 @@ function getPresetById(config: TrackerConfig, id: string): TemplatePreset {
   return getAllPresets(config).find((preset) => preset.id === id) || BUILTIN_PRESETS[0];
 }
 
+function isImportedTemplate(config: TrackerConfig, id: string): boolean {
+  return config.userPresets.some((preset) => preset.id === id)
+    && !BUILTIN_PRESETS.some((preset) => preset.id === id)
+    && !runtimeSeededPresets.some((preset) => preset.id === id);
+}
+
 let configTrackerTagNameHint = "tracker";
 const { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
 
@@ -415,6 +421,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const syncControls = () => {
     mountTemplateOptions(config);
     const templateSelect = byId<HTMLSelectElement>("sst-lumi-template");
+    const deleteTemplateButton = byId<HTMLButtonElement>("sst-lumi-delete-template");
     const tagInput = byId<HTMLInputElement>("sst-lumi-tag");
     const identifierInput = byId<HTMLInputElement>("sst-lumi-identifier");
     const hideInput = byId<HTMLInputElement>("sst-lumi-hide");
@@ -422,6 +429,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const formatSelect = byId<HTMLSelectElement>("sst-lumi-format");
     const retainInput = byId<HTMLInputElement>("sst-lumi-retain");
     if (templateSelect) templateSelect.value = config.templateId;
+    if (deleteTemplateButton) deleteTemplateButton.disabled = !isImportedTemplate(config, config.templateId);
     if (tagInput) tagInput.value = config.trackerTagName;
     if (identifierInput) identifierInput.value = config.codeBlockIdentifier;
     if (hideInput) hideInput.checked = config.hideSimBlocks;
@@ -955,6 +963,16 @@ export function setup(ctx: SpindleFrontendContext) {
       setStatus(message);
       return;
     }
+    if (obj?.type === "delete_preset_result") {
+      const message = typeof obj.message === "string" ? obj.message : "Template deletion failed";
+      setStatus(message);
+      if (!obj.ok) {
+        const deleteTemplateButton = byId<HTMLButtonElement>("sst-lumi-delete-template");
+        const selectedId = byId<HTMLSelectElement>("sst-lumi-template")?.value || "";
+        if (deleteTemplateButton) deleteTemplateButton.disabled = !isImportedTemplate(config, selectedId);
+      }
+      return;
+    }
     if (obj?.type === "config_error") {
       const message = typeof obj.message === "string" && obj.message.trim() ? obj.message.trim() : "Unknown error";
       const operation = obj.operation === "save" ? "Config save failed:" : CONFIG_ERROR_STATUS_PREFIX;
@@ -1340,6 +1358,8 @@ export function setup(ctx: SpindleFrontendContext) {
   const templateSelect = byId<HTMLSelectElement>("sst-lumi-template");
   templateSelect?.addEventListener("change", () => {
     config = { ...config, templateId: templateSelect.value || DEFAULT_CONFIG.templateId };
+    const deleteTemplateButton = byId<HTMLButtonElement>("sst-lumi-delete-template");
+    if (deleteTemplateButton) deleteTemplateButton.disabled = !isImportedTemplate(config, config.templateId);
     const preset = getPresetById(config, config.templateId);
     applyThemeClass(preset);
     const identifierInput = byId<HTMLInputElement>("sst-lumi-identifier");
@@ -1417,6 +1437,18 @@ export function setup(ctx: SpindleFrontendContext) {
     const preset = getPresetById(config, config.templateId);
     downloadJson(`${preset.templateName.replace(/\s+/g, "_").toLowerCase()}_preset.json`, preset);
     setStatus("Preset exported");
+  });
+
+  const deleteTemplateButton = byId<HTMLButtonElement>("sst-lumi-delete-template");
+  deleteTemplateButton?.addEventListener("click", () => {
+    const templateId = byId<HTMLSelectElement>("sst-lumi-template")?.value || "";
+    const preset = isImportedTemplate(config, templateId)
+      ? config.userPresets.find((item) => item.id === templateId)
+      : null;
+    if (!preset || !window.confirm(`Delete imported template "${preset.templateName}"?`)) return;
+    deleteTemplateButton.disabled = true;
+    ctx.sendToBackend({ type: "delete_preset", templateId });
+    setStatus(`Deleting template: ${preset.templateName}...`);
   });
 
   const pickAndImport = async (statusPrefix: string) => {

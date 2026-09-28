@@ -16035,6 +16035,34 @@ spindle.onFrontendMessage(async (payload, userId) => {
     }
     return;
   }
+  if (message.type === "delete_preset") {
+    await ensureConfigForUser(userId);
+    const templateId = typeof message.templateId === "string" ? message.templateId : "";
+    const preset = config.userPresets.find((item) => item.id === templateId);
+    if (!preset) {
+      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: "Only imported templates can be deleted." }, userId);
+      return;
+    }
+    const previousConfig = config;
+    config = {
+      ...config,
+      userPresets: config.userPresets.filter((item) => item.id !== templateId),
+      templateId: config.templateId === templateId ? DEFAULT_CONFIG.templateId : config.templateId
+    };
+    try {
+      await saveConfig(userId);
+    } catch (err) {
+      config = previousConfig;
+      const detail = err instanceof Error ? err.message : String(err);
+      spindle.log.error(`delete_preset failed: ${detail}`);
+      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: `Could not delete template: ${detail}` }, userId);
+      return;
+    }
+    pushMacroValues();
+    await sendConfigState(userId);
+    spindle.sendToFrontend({ type: "delete_preset_result", ok: true, message: `Deleted template: ${preset.templateName}` }, userId);
+    return;
+  }
   if (message.type === "import_preset_file") {
     await handleImportPresetFile(message, userId);
   }

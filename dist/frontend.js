@@ -19201,6 +19201,7 @@ var PANEL_HTML = `
         <button id="sst-lumi-save" type="button">Save Settings</button>
         <button id="sst-lumi-export" type="button">Export Preset</button>
         <button id="sst-lumi-import" type="button">Import Preset</button>
+        <button id="sst-lumi-delete-template" type="button" disabled>Delete Template</button>
       </div>
       <div id="sst-lumi-capabilities" class="sst-lumi-capabilities">Capabilities: loading...</div>
     </div>
@@ -19864,6 +19865,9 @@ function getAllPresets(config) {
 function getPresetById(config, id) {
   return getAllPresets(config).find((preset) => preset.id === id) || BUILTIN_PRESETS[0];
 }
+function isImportedTemplate(config, id) {
+  return config.userPresets.some((preset) => preset.id === id) && !BUILTIN_PRESETS.some((preset) => preset.id === id) && !runtimeSeededPresets.some((preset) => preset.id === id);
+}
 var configTrackerTagNameHint = "tracker";
 var { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
 function setStatus(text) {
@@ -20169,6 +20173,7 @@ function setup(ctx) {
   const syncControls = () => {
     mountTemplateOptions(config);
     const templateSelect2 = byId("sst-lumi-template");
+    const deleteTemplateButton2 = byId("sst-lumi-delete-template");
     const tagInput = byId("sst-lumi-tag");
     const identifierInput = byId("sst-lumi-identifier");
     const hideInput = byId("sst-lumi-hide");
@@ -20177,6 +20182,8 @@ function setup(ctx) {
     const retainInput = byId("sst-lumi-retain");
     if (templateSelect2)
       templateSelect2.value = config.templateId;
+    if (deleteTemplateButton2)
+      deleteTemplateButton2.disabled = !isImportedTemplate(config, config.templateId);
     if (tagInput)
       tagInput.value = config.trackerTagName;
     if (identifierInput)
@@ -20653,6 +20660,17 @@ function setup(ctx) {
       setStatus(message);
       return;
     }
+    if (obj?.type === "delete_preset_result") {
+      const message = typeof obj.message === "string" ? obj.message : "Template deletion failed";
+      setStatus(message);
+      if (!obj.ok) {
+        const deleteTemplateButton2 = byId("sst-lumi-delete-template");
+        const selectedId = byId("sst-lumi-template")?.value || "";
+        if (deleteTemplateButton2)
+          deleteTemplateButton2.disabled = !isImportedTemplate(config, selectedId);
+      }
+      return;
+    }
     if (obj?.type === "config_error") {
       const message = typeof obj.message === "string" && obj.message.trim() ? obj.message.trim() : "Unknown error";
       const operation = obj.operation === "save" ? "Config save failed:" : CONFIG_ERROR_STATUS_PREFIX;
@@ -20992,6 +21010,9 @@ function setup(ctx) {
   const templateSelect = byId("sst-lumi-template");
   templateSelect?.addEventListener("change", () => {
     config = { ...config, templateId: templateSelect.value || DEFAULT_CONFIG.templateId };
+    const deleteTemplateButton2 = byId("sst-lumi-delete-template");
+    if (deleteTemplateButton2)
+      deleteTemplateButton2.disabled = !isImportedTemplate(config, config.templateId);
     const preset = getPresetById(config, config.templateId);
     applyThemeClass(preset);
     const identifierInput = byId("sst-lumi-identifier");
@@ -21064,6 +21085,16 @@ function setup(ctx) {
     const preset = getPresetById(config, config.templateId);
     downloadJson(`${preset.templateName.replace(/\s+/g, "_").toLowerCase()}_preset.json`, preset);
     setStatus("Preset exported");
+  });
+  const deleteTemplateButton = byId("sst-lumi-delete-template");
+  deleteTemplateButton?.addEventListener("click", () => {
+    const templateId = byId("sst-lumi-template")?.value || "";
+    const preset = isImportedTemplate(config, templateId) ? config.userPresets.find((item) => item.id === templateId) : null;
+    if (!preset || !window.confirm(`Delete imported template "${preset.templateName}"?`))
+      return;
+    deleteTemplateButton.disabled = true;
+    ctx.sendToBackend({ type: "delete_preset", templateId });
+    setStatus(`Deleting template: ${preset.templateName}...`);
   });
   const pickAndImport = async (statusPrefix) => {
     try {

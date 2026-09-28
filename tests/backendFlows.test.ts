@@ -12,6 +12,7 @@ let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | nul
 let interceptor: ((messages: Array<Record<string, unknown>>, context: unknown) => Promise<Array<Record<string, unknown>>>) | null = null;
 let permissionChanged: ((payload: { permission: string; granted: boolean; allGranted: string[] }) => void) | null = null;
 let storedConfig: FrontendMessage = {};
+let failNextSave = false;
 let enclaveKey = "";
 const enclaveWrites: string[] = [];
 
@@ -32,7 +33,14 @@ const spindle = {
   },
   userStorage: {
     getJson: async (_path: string, options: { fallback: FrontendMessage }) => ({ ...options.fallback, ...storedConfig }),
-    setJson: async (_path: string, value: FrontendMessage) => { saved.push(value); storedConfig = value; },
+    setJson: async (_path: string, value: FrontendMessage) => {
+      if (failNextSave) {
+        failNextSave = false;
+        throw new Error("storage unavailable");
+      }
+      saved.push(value);
+      storedConfig = value;
+    },
   },
   storage: { exists: async () => false },
   enclave: {
@@ -139,6 +147,54 @@ describe("backend host flows", () => {
     expect(imported.find((message) => message.type === "import_result")).toMatchObject({ ok: true, message: "Imported preset: Custom" });
     const config = imported.find((message) => message.type === "config")?.config as FrontendMessage;
     expect(config.userPresets).toMatchObject([{ templateName: "Custom", htmlTemplate: "<div>custom</div>", sysPrompt: "Track values" }]);
+  });
+
+  test("deleting the selected imported template removes it and selects the default", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const imported = await sendFrontend({
+      type: "import_preset_file",
+      fileName: "temporary.json",
+      text: JSON.stringify({ templateName: "Temporary", sysPrompt: "Track values" }),
+    });
+    const importedConfig = imported.find((message) => message.type === "config")?.config as FrontendMessage;
+    const templateId = importedConfig.templateId as string;
+
+    const deleted = await sendFrontend({ type: "delete_preset", templateId });
+    expect(deleted.find((message) => message.type === "delete_preset_result")).toMatchObject({ ok: true });
+    const config = deleted.find((message) => message.type === "config")?.config as FrontendMessage;
+    expect(config.templateId).toBe("bento-style-tracker");
+    expect(config.userPresets).toEqual([]);
+    expect(saved.at(-1)).toMatchObject({ templateId: "bento-style-tracker", userPresets: [] });
+  });
+
+  test("bundled templates cannot be deleted", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const savedBefore = saved.length;
+    const result = await sendFrontend({ type: "delete_preset", templateId: "bento-style-tracker" });
+    expect(result.find((message) => message.type === "delete_preset_result")).toMatchObject({ ok: false });
+    expect(saved.length).toBe(savedBefore);
+  });
+
+  test("failed template deletion leaves the imported template available", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const imported = await sendFrontend({
+      type: "import_preset_file",
+      fileName: "keep.json",
+      text: JSON.stringify({ templateName: "Keep", sysPrompt: "Track values" }),
+    });
+    const importedConfig = imported.find((message) => message.type === "config")?.config as FrontendMessage;
+    const templateId = importedConfig.templateId as string;
+    failNextSave = true;
+
+    const failed = await sendFrontend({ type: "delete_preset", templateId });
+    expect(failed.find((message) => message.type === "delete_preset_result")).toMatchObject({ ok: false });
+    const loaded = await sendFrontend({ type: "get_config" });
+    const config = loaded.find((message) => message.type === "config")?.config as FrontendMessage;
+    expect(config.templateId).toBe(templateId);
+    expect(config.userPresets).toMatchObject([{ templateName: "Keep" }]);
   });
 
   test("inline-only import is stored as a pack, not a tracker preset", async () => {

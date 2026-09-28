@@ -31,6 +31,7 @@ export const PANEL_HTML = `
         <button id="sst-lumi-save" type="button">Save Settings</button>
         <button id="sst-lumi-export" type="button">Export Preset</button>
         <button id="sst-lumi-import" type="button">Import Preset</button>
+        <button id="sst-lumi-delete-template" type="button" disabled>Delete Template</button>
       </div>
       <div id="sst-lumi-capabilities" class="sst-lumi-capabilities">Capabilities: loading...</div>
     </div>
