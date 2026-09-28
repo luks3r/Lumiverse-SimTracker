@@ -1024,6 +1024,15 @@ function parseTrackerPayload(raw: string): Record<string, unknown> | null {
   return null;
 }
 
+function parseGeneratedTrackerPayload(raw: string): Record<string, unknown> | null {
+  const sanitized = raw.trim()
+    .replace(/^```(?:json|yaml|yml)\s*/i, "")
+    .replace(/^```\s*/, "")
+    .replace(/\s*```\s*$/, "")
+    .trim();
+  return parseTrackerPayload(sanitized);
+}
+
 /**
  * Render tracker data as a compact Markdown tree for prompt context. Tracker
  * payloads remain JSON/YAML everywhere they need to be parsed or persisted;
@@ -2324,17 +2333,27 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       return;
     }
 
-    let sanitized = generatedText.trim();
-    sanitized = sanitized.replace(/^```(?:json|yaml|yml)\s*/i, "");
-    sanitized = sanitized.replace(/^```\s*/, "");
-    sanitized = sanitized.replace(/\s*```\s*$/, "");
-    sanitized = sanitized.trim();
-
-    const parsed = parseTrackerPayload(sanitized);
+    let parsed = parseGeneratedTrackerPayload(generatedText);
     if (!parsed) {
-      spindle.log.warn("Secondary LLM response could not be parsed as valid tracker data");
+      spindle.log.warn("Secondary LLM response was invalid; attempting one syntax repair");
+      const repairResult = await spindle.generate.raw({
+        ...generationRequest,
+        messages: [
+          {
+            role: "system",
+            content: `Repair the supplied tracker as ${config.trackerFormat.toUpperCase()} syntax. Preserve all existing fields and values. Do not add explanations, code fences, or XML tags. Return only the complete corrected document.`,
+          },
+          { role: "user", content: generatedText },
+        ],
+      } as Parameters<typeof spindle.generate.raw>[0]);
+      const repairResultObj = repairResult as Record<string, unknown>;
+      const repairedText = typeof repairResultObj.content === "string" ? repairResultObj.content : "";
+      parsed = parseGeneratedTrackerPayload(repairedText);
+    }
+    if (!parsed) {
+      spindle.log.warn("Secondary LLM response and repair could not be parsed as valid tracker data");
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: "LLM response was not valid tracker data", chatId, messageId: targetMessageId },
+        { type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId },
         activeUserId || undefined,
       );
       return;
