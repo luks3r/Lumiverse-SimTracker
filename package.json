@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "bun run build.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "handlebars": "^4.7.8",
