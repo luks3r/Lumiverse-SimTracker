@@ -12953,6 +12953,104 @@ function formatTrackerForPrompt(raw) {
 `);
 }
 
+// src/trackerExample.ts
+function setDeep(target, path, value) {
+  const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0)
+    return;
+  let cursor = target;
+  for (let i = 0;i < parts.length - 1; i += 1) {
+    const key = parts[i];
+    const existing = cursor[key];
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      cursor[key] = {};
+    }
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+function inferExampleValue(key, description) {
+  const k = key.toLowerCase();
+  const d = description.toLowerCase();
+  if (k === "name")
+    return "Character Name";
+  if (k.includes("date") && k.includes("time"))
+    return "YYYY-MM-DD HH:MM";
+  if (k.includes("date"))
+    return "YYYY-MM-DD";
+  if (k.includes("time"))
+    return "HH:MM";
+  if (k.includes("bg") || k.includes("color"))
+    return "HEX_COLOR";
+  if (/[\[(](?:number|integer|int|float)[\])]/.test(d))
+    return 0;
+  if (/[\[(](?:boolean|bool)[\])]/.test(d))
+    return false;
+  if (/[\[(](?:string|text)[\])]/.test(d))
+    return "";
+  if (/[\[(](?:array|list)[\])]/.test(d)) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  if (/\b\d+\s*=/.test(d))
+    return 0;
+  if (/-?\d+\s*(?:to|[-\u2013\u2014])\s*-?\d+/.test(d))
+    return 0;
+  if (k === "preg" || k === "inactive" || k === "alive" || k === "dead")
+    return false;
+  if (/\btrue\/false\b|\bboolean\b/.test(d))
+    return false;
+  if (k.includes("icon") || k.includes("thought") || k.includes("status"))
+    return "";
+  if (d.includes("array") || d.includes("[{")) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  const numericKeySignals = [
+    "ap",
+    "dp",
+    "tp",
+    "cp",
+    "hp",
+    "mp",
+    "xp",
+    "sp",
+    "affection",
+    "desire",
+    "trust",
+    "contempt",
+    "affinity",
+    "health",
+    "vitality",
+    "level",
+    "turn",
+    "count",
+    "days",
+    "months",
+    "years",
+    "hours",
+    "minutes",
+    "score",
+    "points",
+    "rating",
+    "index",
+    "react",
+    "reason"
+  ];
+  if (numericKeySignals.some((term) => k.includes(term)))
+    return 0;
+  if (d.includes("number"))
+    return 0;
+  if (k.endsWith("s") && !k.endsWith("us") && !k.endsWith("ss") && !k.endsWith("is")) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  return "";
+}
+
 // src/trackerData.ts
 function normalizeTrackerData(data) {
   if (Array.isArray(data.characters)) {
@@ -13989,102 +14087,6 @@ function buildConceptionDirective(names) {
   const verb = names.length === 1 ? "has" : "have";
   const pronoun = names.length === 1 ? "her" : "them";
   return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
-}
-function setDeep(target, path, value) {
-  const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0)
-    return;
-  let cursor = target;
-  for (let i = 0;i < parts.length - 1; i += 1) {
-    const key = parts[i];
-    const existing = cursor[key];
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-      cursor[key] = {};
-    }
-    cursor = cursor[key];
-  }
-  cursor[parts[parts.length - 1]] = value;
-}
-function inferExampleValue(key, description) {
-  const k = key.toLowerCase();
-  const d = description.toLowerCase();
-  if (k === "name")
-    return "Character Name";
-  if (k.includes("date") && k.includes("time"))
-    return "YYYY-MM-DD HH:MM";
-  if (k.includes("date"))
-    return "YYYY-MM-DD";
-  if (k.includes("time"))
-    return "HH:MM";
-  if (k.includes("bg") || k.includes("color"))
-    return "HEX_COLOR";
-  if (/[\[(](?:number|integer|int|float)[\])]/.test(d))
-    return 0;
-  if (/[\[(](?:boolean|bool)[\])]/.test(d))
-    return false;
-  if (/[\[(](?:string|text)[\])]/.test(d))
-    return "";
-  if (/[\[(](?:array|list)[\])]/.test(d)) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  if (/\b\d+\s*=/.test(d))
-    return 0;
-  if (/-?\d+\s*(?:to|[-\u2013\u2014])\s*-?\d+/.test(d))
-    return 0;
-  if (k === "preg" || k === "inactive" || k === "alive" || k === "dead")
-    return false;
-  if (/\btrue\/false\b|\bboolean\b/.test(d))
-    return false;
-  if (k.includes("icon") || k.includes("thought") || k.includes("status"))
-    return "";
-  if (d.includes("array") || d.includes("[{")) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  const numericKeySignals = [
-    "ap",
-    "dp",
-    "tp",
-    "cp",
-    "hp",
-    "mp",
-    "xp",
-    "sp",
-    "affection",
-    "desire",
-    "trust",
-    "contempt",
-    "affinity",
-    "health",
-    "vitality",
-    "level",
-    "turn",
-    "count",
-    "days",
-    "months",
-    "years",
-    "hours",
-    "minutes",
-    "score",
-    "points",
-    "rating",
-    "index",
-    "react",
-    "reason"
-  ];
-  if (numericKeySignals.some((term) => k.includes(term)))
-    return 0;
-  if (d.includes("number"))
-    return 0;
-  if (k.endsWith("s") && !k.endsWith("us") && !k.endsWith("ss") && !k.endsWith("is")) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  return "";
 }
 function buildTemplateExampleData() {
   const preset = getActivePreset();

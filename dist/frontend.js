@@ -18260,6 +18260,82 @@ function normalizeTrackerData(data) {
   };
 }
 
+// src/trackerViewData.ts
+function normalizeCharacters(data) {
+  if (Array.isArray(data.characters))
+    return data.characters;
+  const out = [];
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "worldData")
+      continue;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      out.push({ name: key, ...value });
+    }
+  }
+  return out;
+}
+function getDeepValue(obj, path) {
+  const parts = path.split(".");
+  let current = obj;
+  for (const part of parts) {
+    if (current && typeof current === "object" && !Array.isArray(current)) {
+      current = current[part];
+    } else {
+      return;
+    }
+  }
+  return current;
+}
+function findNumericPaths(obj, prefix = "") {
+  const paths = [];
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    for (const [key, value] of Object.entries(obj)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (typeof value === "number") {
+        paths.push(path);
+      } else if (value && typeof value === "object" && !Array.isArray(value)) {
+        paths.push(...findNumericPaths(value, path));
+      }
+    }
+  }
+  return paths;
+}
+function calculateStatChanges(currentCharacters, previous) {
+  const changes = {};
+  if (!previous) {
+    for (const char of currentCharacters) {
+      const name = typeof char.name === "string" ? char.name : "Character";
+      changes[name] = {};
+    }
+    return changes;
+  }
+  const prevChars = normalizeCharacters(previous);
+  const prevByName = new Map;
+  for (const char of prevChars) {
+    const name = typeof char.name === "string" ? char.name : "";
+    if (name)
+      prevByName.set(name, char);
+  }
+  for (const current of currentCharacters) {
+    const name = typeof current.name === "string" ? current.name : "Character";
+    const prev = prevByName.get(name);
+    if (!prev) {
+      changes[name] = {};
+      continue;
+    }
+    const out = {};
+    for (const path of findNumericPaths(prev)) {
+      const curVal = getDeepValue(current, path);
+      const prevVal = getDeepValue(prev, path);
+      if (typeof curVal === "number" && typeof prevVal === "number") {
+        out[`${path}Change`] = curVal - prevVal;
+      }
+    }
+    changes[name] = out;
+  }
+  return changes;
+}
+
 // src/inlineTemplates.ts
 var import_handlebars = __toESM(require_handlebars(), 1);
 var LEGACY_MARKER_REGEX = /\[\[(?:DISPLAY|D)=([^,\]]+),\s*DATA=(\{[\s\S]*?\})\s*\]\]/g;
@@ -18652,105 +18728,7 @@ function adjustHslColor(hex, hueShift, saturationAdjust, lightnessAdjust) {
   return `#${rgb.r.toString(16).padStart(2, "0")}${rgb.g.toString(16).padStart(2, "0")}${rgb.b.toString(16).padStart(2, "0")}`;
 }
 
-// src/frontend.ts
-var FERTILITY_CYCLE_BIAS_VALUES = [
-  "random",
-  "menstruating",
-  "start_follicular",
-  "close_ovulation",
-  "ovulating",
-  "start_luteal",
-  "end_luteal"
-];
-var DEFAULT_CONFIG = {
-  trackerTagName: "tracker",
-  codeBlockIdentifier: "sim",
-  hideSimBlocks: true,
-  templateId: "bento-style-tracker",
-  trackerFormat: "json",
-  retainTrackerCount: 3,
-  enableInlineTemplates: false,
-  userPresets: [],
-  inlinePacks: [],
-  useSecondaryLLM: false,
-  secondaryLLMConnectionId: "",
-  secondaryLLMModel: "",
-  secondaryLLMMessageCount: 5,
-  secondaryLLMTemperature: 0.7,
-  secondaryLLMStripHTML: true,
-  fertilityCycleBias: "random",
-  typeSafeEnabled: false,
-  typeSafeApiKey: "",
-  typeSafeModel: "jev-latest",
-  typeSafeQuickAppend: true,
-  typeSafeVerify: true,
-  typeSafeConception: true,
-  typeSafeConfidenceFloor: 0.6
-};
-var BUILTIN_PRESETS = getTemplatePresets();
-var runtimeSeededPresets = [];
-var TEMPLATE_CACHE = new Map;
-var helpersRegistered = false;
-var panelRoot = null;
-var READY_MIN_VERSION = [1, 0, 6];
-function parseVersionSegment(segment) {
-  if (!segment)
-    return 0;
-  const match = segment.match(/\d+/);
-  return match ? Number(match[0]) : 0;
-}
-function isVersionAtLeast(version, minimum) {
-  const parts = version.split(".");
-  for (let index = 0;index < minimum.length; index += 1) {
-    const current = parseVersionSegment(parts[index]);
-    const required = minimum[index];
-    if (current > required)
-      return true;
-    if (current < required)
-      return false;
-  }
-  return true;
-}
-async function shouldBroadcastReadyForHost() {
-  try {
-    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
-    if (!response.ok)
-      return true;
-    const payload = await response.json();
-    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
-    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
-  } catch {
-    return true;
-  }
-}
-function createReadyGate(ctx) {
-  const readyContext = ctx;
-  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
-    return {
-      dispose() {},
-      release() {}
-    };
-  }
-  readyContext.deferReady();
-  const shouldBroadcastReady = shouldBroadcastReadyForHost();
-  let disposed = false;
-  let released = false;
-  return {
-    dispose() {
-      disposed = true;
-    },
-    release() {
-      if (disposed || released)
-        return;
-      released = true;
-      shouldBroadcastReady.then((allowed) => {
-        if (!disposed && allowed) {
-          readyContext.ready?.();
-        }
-      });
-    }
-  };
-}
+// src/frontendBiology.ts
 var FERTILITY_STAGE_BY_ID = {
   1: "menstruation",
   2: "follicular",
@@ -19162,6 +19140,106 @@ function analShaftTopY(stats) {
     return ANAL_OPENING_Y;
   return ANAL_OPENING_Y - depth / 100 * (ANAL_OPENING_Y - ANAL_DEEP_Y);
 }
+
+// src/frontend.ts
+var FERTILITY_CYCLE_BIAS_VALUES = [
+  "random",
+  "menstruating",
+  "start_follicular",
+  "close_ovulation",
+  "ovulating",
+  "start_luteal",
+  "end_luteal"
+];
+var DEFAULT_CONFIG = {
+  trackerTagName: "tracker",
+  codeBlockIdentifier: "sim",
+  hideSimBlocks: true,
+  templateId: "bento-style-tracker",
+  trackerFormat: "json",
+  retainTrackerCount: 3,
+  enableInlineTemplates: false,
+  userPresets: [],
+  inlinePacks: [],
+  useSecondaryLLM: false,
+  secondaryLLMConnectionId: "",
+  secondaryLLMModel: "",
+  secondaryLLMMessageCount: 5,
+  secondaryLLMTemperature: 0.7,
+  secondaryLLMStripHTML: true,
+  fertilityCycleBias: "random",
+  typeSafeEnabled: false,
+  typeSafeApiKey: "",
+  typeSafeModel: "jev-latest",
+  typeSafeQuickAppend: true,
+  typeSafeVerify: true,
+  typeSafeConception: true,
+  typeSafeConfidenceFloor: 0.6
+};
+var BUILTIN_PRESETS = getTemplatePresets();
+var runtimeSeededPresets = [];
+var TEMPLATE_CACHE = new Map;
+var helpersRegistered = false;
+var panelRoot = null;
+var READY_MIN_VERSION = [1, 0, 6];
+function parseVersionSegment(segment) {
+  if (!segment)
+    return 0;
+  const match = segment.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+function isVersionAtLeast(version, minimum) {
+  const parts = version.split(".");
+  for (let index = 0;index < minimum.length; index += 1) {
+    const current = parseVersionSegment(parts[index]);
+    const required = minimum[index];
+    if (current > required)
+      return true;
+    if (current < required)
+      return false;
+  }
+  return true;
+}
+async function shouldBroadcastReadyForHost() {
+  try {
+    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
+    if (!response.ok)
+      return true;
+    const payload = await response.json();
+    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
+    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
+  } catch {
+    return true;
+  }
+}
+function createReadyGate(ctx) {
+  const readyContext = ctx;
+  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
+    return {
+      dispose() {},
+      release() {}
+    };
+  }
+  readyContext.deferReady();
+  const shouldBroadcastReady = shouldBroadcastReadyForHost();
+  let disposed = false;
+  let released = false;
+  return {
+    dispose() {
+      disposed = true;
+    },
+    release() {
+      if (disposed || released)
+        return;
+      released = true;
+      shouldBroadcastReady.then((allowed) => {
+        if (!disposed && allowed) {
+          readyContext.ready?.();
+        }
+      });
+    }
+  };
+}
 function byId(id) {
   const scoped = panelRoot?.querySelector(`#${id}`);
   if (scoped)
@@ -19468,80 +19546,6 @@ ${logic}
   } catch {
     return input;
   }
-}
-function normalizeCharacters(data) {
-  if (Array.isArray(data.characters))
-    return data.characters;
-  const out = [];
-  for (const [key, value] of Object.entries(data)) {
-    if (key === "worldData")
-      continue;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      out.push({ name: key, ...value });
-    }
-  }
-  return out;
-}
-function getDeepValue(obj, path) {
-  const parts = path.split(".");
-  let current = obj;
-  for (const part of parts) {
-    if (current && typeof current === "object" && !Array.isArray(current)) {
-      current = current[part];
-    } else {
-      return;
-    }
-  }
-  return current;
-}
-function findNumericPaths(obj, prefix = "") {
-  const paths = [];
-  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    for (const [key, value] of Object.entries(obj)) {
-      const path = prefix ? `${prefix}.${key}` : key;
-      if (typeof value === "number") {
-        paths.push(path);
-      } else if (value && typeof value === "object" && !Array.isArray(value)) {
-        paths.push(...findNumericPaths(value, path));
-      }
-    }
-  }
-  return paths;
-}
-function calculateStatChanges(currentCharacters, previous) {
-  const changes = {};
-  if (!previous) {
-    for (const char of currentCharacters) {
-      const name = typeof char.name === "string" ? char.name : "Character";
-      changes[name] = {};
-    }
-    return changes;
-  }
-  const prevChars = normalizeCharacters(previous);
-  const prevByName = new Map;
-  for (const char of prevChars) {
-    const name = typeof char.name === "string" ? char.name : "";
-    if (name)
-      prevByName.set(name, char);
-  }
-  for (const current of currentCharacters) {
-    const name = typeof current.name === "string" ? current.name : "Character";
-    const prev = prevByName.get(name);
-    if (!prev) {
-      changes[name] = {};
-      continue;
-    }
-    const out = {};
-    for (const path of findNumericPaths(prev)) {
-      const curVal = getDeepValue(current, path);
-      const prevVal = getDeepValue(prev, path);
-      if (typeof curVal === "number" && typeof prevVal === "number") {
-        out[`${path}Change`] = curVal - prevVal;
-      }
-    }
-    changes[name] = out;
-  }
-  return changes;
 }
 function registerTemplateHelpers() {
   if (helpersRegistered)
