@@ -1,4 +1,4 @@
-import type { SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
+import type { SpindleAppMountHandle, SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
 import { getTemplatePresets, mergeTemplatePresets, type TemplatePreset } from "../shared/templatePresets";
 import { parseTrackerBlock, type TrackerData } from "../shared/trackerData";
 import { createReadyGate } from "./frontendReadyGate";
@@ -231,7 +231,7 @@ export function setup(ctx: SpindleFrontendContext) {
     getPreset: () => getPresetById(config, config.templateId),
   });
   let sideTrackerMount: Element | null = null;
-  let sideAppMount: { mount: any; side: string } | null = null;
+  let sideAppMount: { mount: SpindleAppMountHandle; side: string } | null = null;
   let grantedPermissions: string[] = [];
   let requestedPermissions: string[] = [];
   let ephemeralPoolStatus: Record<string, unknown> | null = null;
@@ -591,7 +591,7 @@ export function setup(ctx: SpindleFrontendContext) {
       wrapper.querySelectorAll<HTMLElement>(".sim-tracker-card.active").forEach((el) => el.classList.remove("active"));
       if (!wasActive) {
         tab.classList.add("active");
-        const escaped = typeof (window as any).CSS?.escape === "function" ? (window as any).CSS.escape(charId) : charId.replace(/"/g, '\\"');
+        const escaped = typeof window.CSS?.escape === "function" ? window.CSS.escape(charId) : charId.replace(/"/g, '\\"');
         const card = wrapper.querySelector<HTMLElement>(`.sim-tracker-card[data-character="${escaped}"]`);
         if (card) card.classList.add("active");
       }

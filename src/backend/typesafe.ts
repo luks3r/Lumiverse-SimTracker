@@ -165,7 +165,7 @@ export type PatchableField =
 // Bracketed type markers only — a bare `int` would eat "Points" from
 // "Affection Points". Mirrors the bracket-required markers inferExampleValue
 // uses on the same descriptions.
-const TYPE_MARKER_RE = /[\[(](?:number|integer|int|float|boolean|bool|string|text|array|list)[\])]/gi;
+const TYPE_MARKER_RE = /[[(](?:number|integer|int|float|boolean|bool|string|text|array|list)[\])]/gi;
 const ENUM_PAIR_RE = /(\d+)\s*=\s*([^,;]+)/g;
 const RANGE_RE = /(-?\d+(?:\.\d+)?)\s*(?:to|[-–—])\s*(-?\d+(?:\.\d+)?)/;
 const BOOLEAN_KEYS: Record<string, true> = { preg: true, inactive: true, alive: true, dead: true };
@@ -203,7 +203,7 @@ export function classifyPatchableField(key: string, description: string): Patcha
 
   // Booleans: explicit marker, stated true/false, or the well-known keys
   // (exact match only — `days_preg` must stay out).
-  if (/[\[(](?:boolean|bool)[\])]/.test(desc) || /\btrue\/false\b/.test(desc) || BOOLEAN_KEYS[key.toLowerCase()] === true) {
+  if (/[[(](?:boolean|bool)[\])]/.test(desc) || /\btrue\/false\b/.test(desc) || BOOLEAN_KEYS[key.toLowerCase()] === true) {
     return { kind: "flag", key, label: label || key };
   }
 

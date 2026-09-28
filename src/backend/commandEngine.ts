@@ -55,7 +55,7 @@ export function createCommandEngine(deps: {
   ): Promise<CommandResultPayload | null> {
     if (!deps.hasChatMutationPermission() || !ctx.chatId) return null;
 
-    let messages: CommandMessage[] = [];
+    let messages: CommandMessage[];
     try {
       messages = await deps.getMessages(ctx.chatId);
     } catch {

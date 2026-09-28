@@ -59,10 +59,10 @@ export function inferExampleValue(key: string, description: string): unknown {
   //    heuristics. Supported markers: `[number]`, `[integer]`, `[int]`,
   //    `[float]`, `[boolean]`, `[bool]`, `[string]`, `[text]`,
   //    `[array]`, `[list]`, and the `(...)` parenthesised variants.
-  if (/[\[(](?:number|integer|int|float)[\])]/.test(d)) return 0;
-  if (/[\[(](?:boolean|bool)[\])]/.test(d)) return false;
-  if (/[\[(](?:string|text)[\])]/.test(d)) return "";
-  if (/[\[(](?:array|list)[\])]/.test(d)) {
+  if (/[[(](?:number|integer|int|float)[\])]/.test(d)) return 0;
+  if (/[[(](?:boolean|bool)[\])]/.test(d)) return false;
+  if (/[[(](?:string|text)[\])]/.test(d)) return "";
+  if (/[[(](?:array|list)[\])]/.test(d)) {
     if (k.includes("connection")) return [{ name: "Target", affinity: 0 }];
     return [];
   }

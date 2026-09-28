@@ -5,13 +5,17 @@
   "type": "module",
   "scripts": {
     "build": "bun run build.mjs",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
     "handlebars": "^4.7.9",
     "lumiverse-spindle-types": "0.6.36",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.70.1",
     "yaml": "^2.9.1"
   }
 }

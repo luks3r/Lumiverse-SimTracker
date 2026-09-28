@@ -13022,13 +13022,13 @@ function inferExampleValue(key, description) {
     return "HH:MM";
   if (k.includes("bg") || k.includes("color"))
     return "HEX_COLOR";
-  if (/[\[(](?:number|integer|int|float)[\])]/.test(d))
+  if (/[[(](?:number|integer|int|float)[\])]/.test(d))
     return 0;
-  if (/[\[(](?:boolean|bool)[\])]/.test(d))
+  if (/[[(](?:boolean|bool)[\])]/.test(d))
     return false;
-  if (/[\[(](?:string|text)[\])]/.test(d))
+  if (/[[(](?:string|text)[\])]/.test(d))
     return "";
-  if (/[\[(](?:array|list)[\])]/.test(d)) {
+  if (/[[(](?:array|list)[\])]/.test(d)) {
     if (k.includes("connection"))
       return [{ name: "Target", affinity: 0 }];
     return [];
@@ -13551,7 +13551,6 @@ ${payload.trim()}
   function normalizeLegacyHiddenDivTrackers(message) {
     if (!message)
       return { content: message, replacements: 0 };
-    const tagName = sanitizeTagName(config.trackerTagName);
     const identifier = sanitizeIdentifier(config.codeBlockIdentifier);
     const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
     let replacements = 0;
@@ -13749,9 +13748,7 @@ ${formatTrackerForPrompt(payload)}`;
       if (match[0])
         count++;
     }
-    for (const _range of legacyHiddenDivTrackerRanges(content)) {
-      count++;
-    }
+    count += legacyHiddenDivTrackerRanges(content).length;
     return count;
   }
   function countTrackersInMessages(messages, maxNeeded = Number.MAX_SAFE_INTEGER) {
@@ -14340,7 +14337,7 @@ function createCommandEngine(deps) {
   async function mutateChatForCommand(command, arg1, ctx) {
     if (!deps.hasChatMutationPermission() || !ctx.chatId)
       return null;
-    let messages = [];
+    let messages;
     try {
       messages = await deps.getMessages(ctx.chatId);
     } catch {
@@ -14662,7 +14659,7 @@ function extractAnswers(raw) {
   }
   throw new Error(`TypeSafe proxy response missing \`answers\`: ${truncate(JSON.stringify(rec))}`);
 }
-var TYPE_MARKER_RE = /[\[(](?:number|integer|int|float|boolean|bool|string|text|array|list)[\])]/gi;
+var TYPE_MARKER_RE = /[[(](?:number|integer|int|float|boolean|bool|string|text|array|list)[\])]/gi;
 var ENUM_PAIR_RE = /(\d+)\s*=\s*([^,;]+)/g;
 var RANGE_RE = /(-?\d+(?:\.\d+)?)\s*(?:to|[-\u2013\u2014])\s*(-?\d+(?:\.\d+)?)/;
 var BOOLEAN_KEYS = { preg: true, inactive: true, alive: true, dead: true };
@@ -14691,7 +14688,7 @@ function classifyPatchableField(key, description) {
       return { kind: "scale", key, label: label || key, min: lo, max: hi };
     }
   }
-  if (/[\[(](?:boolean|bool)[\])]/.test(desc) || /\btrue\/false\b/.test(desc) || BOOLEAN_KEYS[key.toLowerCase()] === true) {
+  if (/[[(](?:boolean|bool)[\])]/.test(desc) || /\btrue\/false\b/.test(desc) || BOOLEAN_KEYS[key.toLowerCase()] === true) {
     return { kind: "flag", key, label: label || key };
   }
   return null;
@@ -14982,7 +14979,6 @@ var config = { ...DEFAULT_CONFIG };
 var lastSimStats = "{}";
 var activeUserId = null;
 var loadedConfigUserId = null;
-var activeSimTrackerMacroContent = "";
 var firstMessageFertilityHint = "";
 var activeChatId = null;
 var conceptionNotified = new Set;
@@ -14998,7 +14994,7 @@ function getActivePreset() {
   return getAllPresets().find((preset) => preset.id === config.templateId) || getTemplatePresetById(config.templateId) || getTemplatePresetById(DEFAULT_CONFIG.templateId);
 }
 var trackerMessageCodec = createTrackerMessageCodec(() => config);
-var { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload } = trackerMessageCodec;
+var { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers } = trackerMessageCodec;
 var normalizeLegacyTrackersInChat = createLegacyTrackerNormalizer({
   getMessages: (chatId) => spindle.chat.getMessages(chatId),
   updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
@@ -15319,7 +15315,6 @@ function pushMacroValues() {
 
 ` + firstMessageFertilityHint;
   }
-  activeSimTrackerMacroContent = simTracker;
   spindle.updateMacroValue("sim_tracker", simTracker);
   spindle.updateMacroValue("last_sim_stats", formatTrackerForPrompt(lastSimStats || "{}"));
 }

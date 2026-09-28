@@ -37,6 +37,8 @@ export function createSettingsStore(deps: {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       deps.logError(`Failed to load SimTracker settings for user ${userId}: ${message}`);
+      // Preserve the existing public error shape and message for callers.
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(`Unable to load saved settings: ${message}`);
     }
   }

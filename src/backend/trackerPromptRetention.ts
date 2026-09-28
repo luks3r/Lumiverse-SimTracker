@@ -2,6 +2,7 @@ import { formatTrackerForPrompt } from "./trackerPayload";
 import { buildTrackerFenceRegex, buildTrackerTagRegex, parseTagAttributes, sanitizeIdentifier } from "../shared/trackerSyntax";
 import type { createTrackerMessageCodec } from "./trackerMessageCodec";
 import type { TrackerConfig } from "../shared/trackerConfig";
+import type { LlmMessageDTO } from "lumiverse-spindle-types";
 
 type TrackerHistoryEntry = { messageId: string; payload: string };
 
@@ -63,8 +64,8 @@ export function createTrackerPromptRetention(
    * backfill: prompts are compact whether history came from canonical messages
    * or from chatTrackerHistory.
    */
-  function formatTrackerBlocksInMessages(messages: any[]): any[] {
-    let output: any[] | null = null;
+  function formatTrackerBlocksInMessages<T extends { content: string | unknown[] }>(messages: T[]): T[] {
+    let output: T[] | null = null;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i];
       if (!message || typeof message.content !== "string") continue;
@@ -126,7 +127,7 @@ export function createTrackerPromptRetention(
    * Optimized to scan newest → oldest and stop as soon as `keepNewest` blocks
    * have been seen, so long chat histories are not fully parsed every turn.
    */
-  function stripOldTrackerBlocksGlobal<T extends { content: string }>(
+  function stripOldTrackerBlocksGlobal<T extends { content: string | unknown[] }>(
     messages: T[],
     identifier: string,
     keepNewest: number,
@@ -209,9 +210,7 @@ export function createTrackerPromptRetention(
       if (match[0]) count++;
     }
   
-    for (const _range of legacyHiddenDivTrackerRanges(content)) {
-      count++;
-    }
+    count += legacyHiddenDivTrackerRanges(content).length;
   
     return count;
   }
@@ -222,7 +221,7 @@ export function createTrackerPromptRetention(
    * end of the context, scanning newest → oldest avoids parsing long history.
    */
   function countTrackersInMessages(
-    messages: Array<{ content?: string }>,
+    messages: Array<{ content?: string | unknown[] }>,
     maxNeeded = Number.MAX_SAFE_INTEGER,
   ): number {
     let count = 0;
@@ -255,9 +254,9 @@ export function createTrackerPromptRetention(
    * unchanged when there is no directive.
    */
   function withTrailingDirective(
-    messages: Array<Record<string, unknown>>,
+    messages: LlmMessageDTO[],
     directive: string,
-  ): Array<Record<string, unknown>> {
+  ): LlmMessageDTO[] {
     if (!directive) return messages;
     const injected = messages.slice();
     injected.splice(Math.max(0, injected.length - 1), 0, { role: "system", content: directive });

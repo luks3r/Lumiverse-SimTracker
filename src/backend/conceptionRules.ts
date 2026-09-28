@@ -24,12 +24,6 @@ export function isFemaleOrFuta(stats: CharacterStats): boolean {
   return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
 }
 
-function isOvulating(stats: CharacterStats): boolean {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  return stage === "ovulation" || stageId === 3;
-}
-
 export function isInFertileWindow(stats: CharacterStats): boolean {
   const stage = String(stats.cycle_stage || "").toLowerCase();
   const stageId = Number(stats.cycle_stage_id || 0);

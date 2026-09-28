@@ -1,11 +1,12 @@
 import { getTemplatePresetById, getTemplatePresets, mergeTemplatePresets, type TemplatePreset } from "../shared/templatePresets";
+import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import { stringify as stringifyYaml } from "yaml";
 import { formatTrackerForPrompt, parseGeneratedTrackerPayload, parseTrackerPayload } from "./trackerPayload";
 import { buildTemplateExampleData as buildTemplateExampleDataForPreset, formatTrackerPayload as formatTrackerPayloadWithTag } from "./trackerCommandText";
 import { buildFirstMessageHint } from "../shared/fertilityCycleHint";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { mergeTrackerConfig } from "./backendConfig";
-import { buildTrackerFenceRegex, buildTrackerTagRegex, escapeRegex, extractSimBlock, extractTrackerTag, extractTrackerTagLoose, parseTagAttributes, sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
+import { buildTrackerFenceRegex, buildTrackerTagRegex, sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { createTrackerMessageCodec } from "./trackerMessageCodec";
 import { createTrackerPromptRetention } from "./trackerPromptRetention";
 import { createTrackerHistory } from "./trackerHistory";
@@ -19,8 +20,8 @@ import { resolveSecondaryConnection } from "./secondaryConnection";
 import { createCommandEngine } from "./commandEngine";
 import { createSettingsStore } from "./settingsStore";
 import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "./secondaryPromptText";
-import { readMessageContext, type MessageContext } from "./backendMessageContext";
-import { CONCEPTION_CONFIG, coinFlip, extractCurrentDate, getCharactersFromPayload, isAlreadyConceivedOrPregnant, isFemaleOrFuta, isInFertileWindow, type CharacterStats } from "./conceptionRules";
+import { readMessageContext } from "./backendMessageContext";
+import { CONCEPTION_CONFIG, coinFlip, extractCurrentDate, getCharactersFromPayload, isAlreadyConceivedOrPregnant, isFemaleOrFuta, isInFertileWindow } from "./conceptionRules";
 import {
   applyFastLaneAnswers,
   buildConceptionQuestions,
@@ -59,7 +60,6 @@ let config: TrackerConfig = { ...DEFAULT_CONFIG };
 let lastSimStats = "{}";
 let activeUserId: string | null = null;
 let loadedConfigUserId: string | null = null;
-let activeSimTrackerMacroContent = "";
 let firstMessageFertilityHint = "";
 
 /**
@@ -96,7 +96,7 @@ function getActivePreset(): TemplatePreset {
 }
 
 const trackerMessageCodec = createTrackerMessageCodec(() => config);
-const { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload } = trackerMessageCodec;
+const { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers } = trackerMessageCodec;
 const normalizeLegacyTrackersInChat = createLegacyTrackerNormalizer({
   getMessages: (chatId) => spindle.chat.getMessages(chatId),
   updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
@@ -283,23 +283,6 @@ function commitForcedConception(chatId: string, plan: ConceptionMutation): void 
   history[idx] = { ...history[idx], payload: plan.newPayload };
 }
 
-const CERVIX_STATE_BY_ID: Record<number, string> = {
-  0: "",
-  1: "sealed",
-  2: "firm",
-  3: "soft",
-  4: "open",
-  5: "dilated",
-  6: "kissed",
-};
-
-function cervixStateLabel(stats: CharacterStats): string {
-  const id = Number(stats.cervix_state_id || stats.cervixStateId || 0);
-  if (CERVIX_STATE_BY_ID[id]) return CERVIX_STATE_BY_ID[id];
-  const legacy = typeof stats.cervix_state === "string" ? stats.cervix_state.toLowerCase() : "";
-  return legacy;
-}
-
 function buildTemplateExampleData(): Record<string, unknown> {
   return buildTemplateExampleDataForPreset(getActivePreset());
 }
@@ -311,62 +294,6 @@ function buildExampleTrackerBlock(format: "json" | "yaml", identifier: string): 
 
 function formatTrackerPayload(data: Record<string, unknown>, format: "json" | "yaml", identifier: string): string {
   return formatTrackerPayloadWithTag(data, format, identifier, config.trackerTagName);
-}
-
-function stripOldTrackerBlocks(content: string, identifier: string, keepNewest: number): string {
-  if (!content || keepNewest < 0) return content;
-  const fenceRe = buildTrackerFenceRegex(identifier, "gi");
-  const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
-
-  const blocks: Array<{ start: number; end: number; text: string }> = [];
-  for (const match of content.matchAll(fenceRe)) {
-    const text = match[0] || "";
-    const start = match.index ?? -1;
-    if (start < 0 || !text) continue;
-    blocks.push({ start, end: start + text.length, text });
-  }
-  for (const match of content.matchAll(tagRe)) {
-    const text = match[0] || "";
-    const attrs = parseTagAttributes(match[1] || "");
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    const desiredType = sanitizeIdentifier(identifier);
-    if (foundType && foundType !== desiredType) continue;
-    const start = match.index ?? -1;
-    if (start < 0 || !text) continue;
-    blocks.push({ start, end: start + text.length, text });
-  }
-
-  blocks.sort((a, b) => a.start - b.start);
-  const matches = blocks;
-  if (matches.length <= keepNewest || keepNewest === 0) {
-    if (keepNewest === 0) {
-      let wiped = content.replace(fenceRe, "");
-      wiped = wiped.replace(tagRe, (full, attrsRaw) => {
-        const attrs = parseTagAttributes(String(attrsRaw || ""));
-        const foundType = sanitizeIdentifier(attrs.type || "");
-        const desiredType = sanitizeIdentifier(identifier);
-        if (foundType && foundType !== desiredType) return full;
-        return "";
-      });
-      return wiped.replace(/\n\s*\n\s*\n/g, "\n\n").trim();
-    }
-    return content;
-  }
-
-  const removeCount = matches.length - keepNewest;
-  const removeIndexes = new Set<number>();
-  for (let i = 0; i < removeCount; i += 1) removeIndexes.add(i);
-
-  let out = "";
-  let cursor = 0;
-  for (let i = 0; i < matches.length; i += 1) {
-    const block = matches[i];
-    out += content.slice(cursor, block.start);
-    if (!removeIndexes.has(i)) out += block.text;
-    cursor = block.end;
-  }
-  out += content.slice(cursor);
-  return out.replace(/\n\s*\n\s*\n/g, "\n\n").trim();
 }
 
 async function loadConfig(userId: string): Promise<void> {
@@ -628,7 +555,6 @@ function pushMacroValues(): void {
   if (firstMessageFertilityHint) {
     simTracker += "\n\n" + firstMessageFertilityHint;
   }
-  activeSimTrackerMacroContent = simTracker;
   spindle.updateMacroValue("sim_tracker", simTracker);
 
   // last_sim_stats — expose a prompt-efficient Markdown view while keeping
@@ -1148,7 +1074,7 @@ function tryRegisterInterceptor(): void {
   if (!hasPermission("interceptor")) return;
 
   try {
-    spindle.registerInterceptor(async (messages: any[], context: unknown) => {
+    spindle.registerInterceptor(async (messages: LlmMessageDTO[], context: unknown) => {
       const keepNewest = config.retainTrackerCount;
       if (keepNewest < 0) return messages;
       if (!Array.isArray(messages) || messages.length === 0) return messages;

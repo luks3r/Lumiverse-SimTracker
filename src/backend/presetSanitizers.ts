@@ -48,7 +48,7 @@ export function sanitizePresetArray(value: unknown): TemplatePreset[] {
         displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
         inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
         inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-        customFields: Array.isArray(p.customFields) ? (p.customFields as any) : [],
+        customFields: Array.isArray(p.customFields) ? (p.customFields as NonNullable<TemplatePreset["customFields"]>) : [],
         extSettings: (p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}) as Record<string, unknown>,
       });
     });

@@ -181,6 +181,8 @@ This repo ships pre-built `dist/backend.js` and `dist/frontend.js`. To rebuild:
 ```bash
 bun install
 bun run build
+bun run typecheck
+bun run lint
 ```
 
 See `AGENTS.md` for the full development reference.

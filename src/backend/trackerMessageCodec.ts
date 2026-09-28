@@ -86,7 +86,6 @@ export function createTrackerMessageCodec(readConfig: () => Pick<TrackerConfig, 
   function normalizeLegacyHiddenDivTrackers(message: string): { content: string; replacements: number } {
     if (!message) return { content: message, replacements: 0 };
   
-    const tagName = sanitizeTagName(config.trackerTagName);
     const identifier = sanitizeIdentifier(config.codeBlockIdentifier);
     const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
     let replacements = 0;
