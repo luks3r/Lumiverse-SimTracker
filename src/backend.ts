@@ -3,6 +3,9 @@ import { stringify as stringifyYaml } from "yaml";
 import { formatTrackerForPrompt, parseGeneratedTrackerPayload, parseTrackerPayload } from "./trackerPayload";
 import { inferExampleValue, setDeep } from "./trackerExample";
 import { buildFirstMessageHint, type FertilityCycleBias } from "./fertilityCycleHint";
+import { sanitizeInlinePacks, sanitizePresetArray, sanitizeSinglePreset } from "./presetSanitizers";
+import { readMessageContext, type MessageContext } from "./backendMessageContext";
+import { CONCEPTION_CONFIG, coinFlip, extractCurrentDate, getCharactersFromPayload, isAlreadyConceivedOrPregnant, isFemaleOrFuta, isInFertileWindow, type CharacterStats } from "./conceptionRules";
 import {
   applyFastLaneAnswers,
   buildConceptionQuestions,
@@ -139,25 +142,6 @@ const rehydratedChats = new Set<string>();
  * `preg: true` in a subsequent tracker payload.
  */
 const conceptionNotified = new Set<string>();
-
-/**
- * Conception-gate config.  Threshold is the womb fullness % strictly above
- * which the coin-flip fires (auto-pass at 100 %).  Eligibility window is
- * ovulation, rut, or early luteal (days 17-19).  Triggered characters get
- * their stored tracker mutated in-place to set `conceived: true` so the
- * LLM sees the authoritative state on the next turn.
- */
-const CONCEPTION_CONFIG = {
-  threshold: 85,
-  autoAt: 100,
-  earlyLutealMaxDay: 19,
-};
-
-type MessageContext = {
-  chatId: string | null;
-  messageId: string | null;
-  content: string | null;
-};
 
 type CommandResultPayload = {
   command: string;
@@ -368,84 +352,6 @@ function sanitizeRetainCount(value: unknown): number {
   return Math.max(0, Math.min(20, Math.floor(value)));
 }
 
-function upgradeLegacyImportedPreset(preset: TemplatePreset): TemplatePreset {
-  const html = preset.htmlTemplate || "";
-  const isMissingAttire = !html.includes("nw-attire");
-  const bundled = getTemplatePresetById("narrative-weave-simtracker");
-  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
-  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
-  const isOutdatedRevision = importedRevision < bundledRevision;
-  const isLegacyNarrativeWeave =
-    preset.templateName === "Narrative Weave SimTracker"
-    && html.includes("nw-turn-updates")
-    && html.includes("nw-delta-segment")
-    && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
-
-  if (!isLegacyNarrativeWeave) return preset;
-
-  // Imported Narrative Weave copies receive timestamp IDs, so selecting one
-  // bypasses bundled updates. Upgrade only copies with known template markers.
-  return {
-    ...preset,
-    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
-    ...(isMissingAttire || isOutdatedRevision
-      ? {
-          sysPrompt: bundled.sysPrompt || preset.sysPrompt,
-          displayInstructions: bundled.displayInstructions || preset.displayInstructions,
-          inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
-          inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
-          customFields: bundled.customFields || preset.customFields,
-          extSettings: bundled.extSettings || preset.extSettings,
-        }
-      : {}),
-  };
-}
-
-function sanitizePresetArray(value: unknown): TemplatePreset[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item) => item && typeof item === "object")
-    .map((item, idx) => {
-      const p = item as Record<string, unknown>;
-      return upgradeLegacyImportedPreset({
-        id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
-        templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
-        templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
-        htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-        sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-        displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-        inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-        inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-        customFields: Array.isArray(p.customFields) ? (p.customFields as any) : [],
-        extSettings: (p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}) as Record<string, unknown>,
-      });
-    });
-}
-
-function sanitizeSinglePreset(value: unknown, fallbackId: string): TemplatePreset | null {
-  if (!value || typeof value !== "object") return null;
-  const p = value as Record<string, unknown>;
-  return {
-    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
-    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
-    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
-    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-    customFields: Array.isArray(p.customFields)
-      ? (p.customFields as Array<{ key: string; description: string }>)
-      : [],
-    extSettings: (p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}) as Record<string, unknown>,
-  };
-}
-
-function sanitizeInlinePacks(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>;
-}
-
 function sanitizeInlineEnabled(value: unknown): boolean {
   return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
 }
@@ -514,35 +420,6 @@ async function trackEvent(
   } catch {
     // Telemetry should never break runtime behavior.
   }
-}
-
-function readMessageContext(payload: unknown): MessageContext {
-  if (!payload || typeof payload !== "object") {
-    return { chatId: null, messageId: null, content: null };
-  }
-  const obj = payload as Record<string, unknown>;
-  const nestedMessage = (obj.message && typeof obj.message === "object" ? obj.message : {}) as Record<string, unknown>;
-  const nestedChat = (obj.chat && typeof obj.chat === "object" ? obj.chat : {}) as Record<string, unknown>;
-
-  const chatIdCandidates = [obj.chatId, obj.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, obj.id];
-  const messageIdCandidates = [obj.messageId, obj.message_id, nestedMessage.id, nestedMessage.messageId, obj.id];
-
-  const content =
-    (typeof nestedMessage.content === "string" ? nestedMessage.content : null) ||
-    (typeof obj.content === "string" ? obj.content : null);
-
-  const chatId = chatIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0) as
-    | string
-    | undefined;
-  const messageId = messageIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0) as
-    | string
-    | undefined;
-
-  return {
-    chatId: chatId || null,
-    messageId: messageId || null,
-    content,
-  };
 }
 
 // ── Per-Chat Tracker History (side-channel) ──────────────────────────
@@ -730,52 +607,6 @@ function getRecentChatTrackers(
     : history.slice();
   if (filtered.length <= limit) return filtered;
   return filtered.slice(filtered.length - limit);
-}
-
-type CharacterStats = Record<string, unknown>;
-
-function getCharactersFromPayload(payload: Record<string, unknown>): CharacterStats[] {
-  const chars = payload.characters;
-  if (!Array.isArray(chars)) return [];
-  return chars.filter((c): c is CharacterStats => c && typeof c === "object" && !Array.isArray(c));
-}
-
-function isFemaleOrFuta(stats: CharacterStats): boolean {
-  const sex = String(stats.sex || "").toLowerCase();
-  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
-}
-
-function isOvulating(stats: CharacterStats): boolean {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  return stage === "ovulation" || stageId === 3;
-}
-
-function isInFertileWindow(stats: CharacterStats): boolean {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  if (stage === "ovulation" || stageId === 3) return true;
-  if (stage === "rut" || stageId === 6) return true;
-  if (stage === "luteal" || stageId === 4) {
-    const day = Number(stats.cycle_day || 0);
-    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
-  }
-  return false;
-}
-
-function extractCurrentDate(payload: Record<string, unknown>): string {
-  const world = payload.worldData as Record<string, unknown> | undefined;
-  const date = world?.current_date;
-  if (typeof date === "string" && date.trim()) return date.trim();
-  return new Date().toISOString().slice(0, 10);
-}
-
-function isAlreadyConceivedOrPregnant(stats: CharacterStats): boolean {
-  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
-}
-
-function coinFlip(): boolean {
-  return Math.random() < 0.5;
 }
 
 /**

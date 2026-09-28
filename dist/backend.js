@@ -13094,6 +13094,135 @@ function buildFirstMessageHint(bias) {
   return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
 }
 
+// src/presetSanitizers.ts
+function upgradeLegacyImportedPreset(preset) {
+  const html = preset.htmlTemplate || "";
+  const isMissingAttire = !html.includes("nw-attire");
+  const bundled = getTemplatePresetById("narrative-weave-simtracker");
+  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
+  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
+  const isOutdatedRevision = importedRevision < bundledRevision;
+  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
+  if (!isLegacyNarrativeWeave)
+    return preset;
+  return {
+    ...preset,
+    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
+    ...isMissingAttire || isOutdatedRevision ? {
+      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
+      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
+      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
+      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
+      customFields: bundled.customFields || preset.customFields,
+      extSettings: bundled.extSettings || preset.extSettings
+    } : {}
+  };
+}
+function sanitizePresetArray(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
+    const p = item;
+    return upgradeLegacyImportedPreset({
+      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
+      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
+      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
+      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+      customFields: Array.isArray(p.customFields) ? p.customFields : [],
+      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+    });
+  });
+}
+function sanitizeSinglePreset(value, fallbackId) {
+  if (!value || typeof value !== "object")
+    return null;
+  const p = value;
+  return {
+    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
+    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
+    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
+    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+    customFields: Array.isArray(p.customFields) ? p.customFields : [],
+    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+  };
+}
+function sanitizeInlinePacks(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter((item) => item && typeof item === "object");
+}
+
+// src/backendMessageContext.ts
+function readMessageContext(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { chatId: null, messageId: null, content: null };
+  }
+  const obj = payload;
+  const nestedMessage = obj.message && typeof obj.message === "object" ? obj.message : {};
+  const nestedChat = obj.chat && typeof obj.chat === "object" ? obj.chat : {};
+  const chatIdCandidates = [obj.chatId, obj.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, obj.id];
+  const messageIdCandidates = [obj.messageId, obj.message_id, nestedMessage.id, nestedMessage.messageId, obj.id];
+  const content = (typeof nestedMessage.content === "string" ? nestedMessage.content : null) || (typeof obj.content === "string" ? obj.content : null);
+  const chatId = chatIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
+  const messageId = messageIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
+  return {
+    chatId: chatId || null,
+    messageId: messageId || null,
+    content
+  };
+}
+
+// src/conceptionRules.ts
+var CONCEPTION_CONFIG = {
+  threshold: 85,
+  autoAt: 100,
+  earlyLutealMaxDay: 19
+};
+function getCharactersFromPayload(payload) {
+  const chars = payload.characters;
+  if (!Array.isArray(chars))
+    return [];
+  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
+}
+function isFemaleOrFuta(stats) {
+  const sex = String(stats.sex || "").toLowerCase();
+  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
+}
+function isInFertileWindow(stats) {
+  const stage = String(stats.cycle_stage || "").toLowerCase();
+  const stageId = Number(stats.cycle_stage_id || 0);
+  if (stage === "ovulation" || stageId === 3)
+    return true;
+  if (stage === "rut" || stageId === 6)
+    return true;
+  if (stage === "luteal" || stageId === 4) {
+    const day = Number(stats.cycle_day || 0);
+    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
+  }
+  return false;
+}
+function extractCurrentDate(payload) {
+  const world = payload.worldData;
+  const date = world?.current_date;
+  if (typeof date === "string" && date.trim())
+    return date.trim();
+  return new Date().toISOString().slice(0, 10);
+}
+function isAlreadyConceivedOrPregnant(stats) {
+  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
+}
+function coinFlip() {
+  return Math.random() < 0.5;
+}
+
 // src/trackerData.ts
 function normalizeTrackerData(data) {
   if (Array.isArray(data.characters)) {
@@ -13531,11 +13660,6 @@ var activeChatId = null;
 var chatTrackerHistory = new Map;
 var rehydratedChats = new Set;
 var conceptionNotified = new Set;
-var CONCEPTION_CONFIG = {
-  threshold: 85,
-  autoAt: 100,
-  earlyLutealMaxDay: 19
-};
 var runtime = {
   grantedPermissions: new Set,
   seededPresets: [],
@@ -13716,70 +13840,6 @@ function sanitizeRetainCount(value) {
     return DEFAULT_CONFIG.retainTrackerCount;
   return Math.max(0, Math.min(20, Math.floor(value)));
 }
-function upgradeLegacyImportedPreset(preset) {
-  const html = preset.htmlTemplate || "";
-  const isMissingAttire = !html.includes("nw-attire");
-  const bundled = getTemplatePresetById("narrative-weave-simtracker");
-  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
-  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
-  const isOutdatedRevision = importedRevision < bundledRevision;
-  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
-  if (!isLegacyNarrativeWeave)
-    return preset;
-  return {
-    ...preset,
-    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
-    ...isMissingAttire || isOutdatedRevision ? {
-      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
-      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
-      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
-      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
-      customFields: bundled.customFields || preset.customFields,
-      extSettings: bundled.extSettings || preset.extSettings
-    } : {}
-  };
-}
-function sanitizePresetArray(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
-    const p = item;
-    return upgradeLegacyImportedPreset({
-      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
-      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
-      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
-      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-      customFields: Array.isArray(p.customFields) ? p.customFields : [],
-      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-    });
-  });
-}
-function sanitizeSinglePreset(value, fallbackId) {
-  if (!value || typeof value !== "object")
-    return null;
-  const p = value;
-  return {
-    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
-    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
-    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
-    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-    customFields: Array.isArray(p.customFields) ? p.customFields : [],
-    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-  };
-}
-function sanitizeInlinePacks(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object");
-}
 function sanitizeInlineEnabled(value) {
   return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
 }
@@ -13827,24 +13887,6 @@ async function trackEvent(eventName, payload, options) {
   try {
     await spindle.events.track(eventName, payload, options);
   } catch {}
-}
-function readMessageContext(payload) {
-  if (!payload || typeof payload !== "object") {
-    return { chatId: null, messageId: null, content: null };
-  }
-  const obj = payload;
-  const nestedMessage = obj.message && typeof obj.message === "object" ? obj.message : {};
-  const nestedChat = obj.chat && typeof obj.chat === "object" ? obj.chat : {};
-  const chatIdCandidates = [obj.chatId, obj.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, obj.id];
-  const messageIdCandidates = [obj.messageId, obj.message_id, nestedMessage.id, nestedMessage.messageId, obj.id];
-  const content = (typeof nestedMessage.content === "string" ? nestedMessage.content : null) || (typeof obj.content === "string" ? obj.content : null);
-  const chatId = chatIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  const messageId = messageIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  return {
-    chatId: chatId || null,
-    messageId: messageId || null,
-    content
-  };
 }
 function recordChatTracker(chatId, messageId, payload) {
   if (!chatId || !messageId)
@@ -13969,42 +14011,6 @@ function getRecentChatTrackers(chatId, limit, excludeMessageId) {
   if (filtered.length <= limit)
     return filtered;
   return filtered.slice(filtered.length - limit);
-}
-function getCharactersFromPayload(payload) {
-  const chars = payload.characters;
-  if (!Array.isArray(chars))
-    return [];
-  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
-}
-function isFemaleOrFuta(stats) {
-  const sex = String(stats.sex || "").toLowerCase();
-  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
-}
-function isInFertileWindow(stats) {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  if (stage === "ovulation" || stageId === 3)
-    return true;
-  if (stage === "rut" || stageId === 6)
-    return true;
-  if (stage === "luteal" || stageId === 4) {
-    const day = Number(stats.cycle_day || 0);
-    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
-  }
-  return false;
-}
-function extractCurrentDate(payload) {
-  const world = payload.worldData;
-  const date = world?.current_date;
-  if (typeof date === "string" && date.trim())
-    return date.trim();
-  return new Date().toISOString().slice(0, 10);
-}
-function isAlreadyConceivedOrPregnant(stats) {
-  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
-}
-function coinFlip() {
-  return Math.random() < 0.5;
 }
 async function checkConceptionTriggers(chatId, payload, narrative) {
   if (!chatId)

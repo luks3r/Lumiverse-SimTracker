@@ -38,7 +38,7 @@ var require_utils = __commonJS(function(exports) {
   exports.extend = extend;
   exports.indexOf = indexOf;
   exports.escapeExpression = escapeExpression;
-  exports.isEmpty = isEmpty;
+  exports.isEmpty = isEmpty2;
   exports.createFrame = createFrame;
   exports.blockParams = blockParams;
   exports.appendContextPath = appendContextPath;
@@ -89,23 +89,23 @@ var require_utils = __commonJS(function(exports) {
     }
     return -1;
   }
-  function escapeExpression(string) {
-    if (typeof string !== "string") {
-      if (string && string.toHTML) {
-        return string.toHTML();
-      } else if (string == null) {
+  function escapeExpression(string2) {
+    if (typeof string2 !== "string") {
+      if (string2 && string2.toHTML) {
+        return string2.toHTML();
+      } else if (string2 == null) {
         return "";
-      } else if (!string) {
-        return string + "";
+      } else if (!string2) {
+        return string2 + "";
       }
-      string = "" + string;
+      string2 = "" + string2;
     }
-    if (!possible.test(string)) {
-      return string;
+    if (!possible.test(string2)) {
+      return string2;
     }
-    return string.replace(badChars, escapeChar);
+    return string2.replace(badChars, escapeChar);
   }
-  function isEmpty(value) {
+  function isEmpty2(value) {
     if (!value && value !== 0) {
       return true;
     } else if (isArray(value) && value.length === 0) {
@@ -704,8 +704,8 @@ var require_base = __commonJS(function(exports) {
 // node_modules/handlebars/dist/cjs/handlebars/safe-string.js
 var require_safe_string = __commonJS(function(exports, module) {
   exports.__esModule = true;
-  function SafeString(string) {
-    this.string = string;
+  function SafeString(string2) {
+    this.string = string2;
   }
   SafeString.prototype.toString = SafeString.prototype.toHTML = function() {
     return "" + this.string;
@@ -1397,7 +1397,7 @@ var require_parser = __commonJS(function(exports, module) {
       parseError: function parseError(str, hash) {
         throw new Error(str);
       },
-      parse: function parse(input) {
+      parse: function parse2(input) {
         var self = this, stack = [0], vstack = [null], lstack = [], table = this.table, yytext = "", yylineno = 0, yyleng = 0, recovering = 0, TERROR = 2, EOF = 1;
         this.lexer.setInput(input);
         this.lexer.yy = this.yy;
@@ -1850,12 +1850,12 @@ Expecting ` + expected.join(", ") + ", got '" + (this.terminals_[symbol] || symb
       return lexer2;
     }();
     parser.lexer = lexer;
-    function Parser() {
+    function Parser2() {
       this.yy = {};
     }
-    Parser.prototype = parser;
-    parser.Parser = Parser;
-    return new Parser;
+    Parser2.prototype = parser;
+    parser.Parser = Parser2;
+    return new Parser2;
   }();
   exports.default = handlebars;
   module.exports = exports["default"];
@@ -2301,7 +2301,7 @@ var require_helpers2 = __commonJS(function(exports) {
 var require_base2 = __commonJS(function(exports) {
   exports.__esModule = true;
   exports.parseWithoutProcessing = parseWithoutProcessing;
-  exports.parse = parse;
+  exports.parse = parse2;
   function _interopRequireWildcard(obj) {
     if (obj && obj.__esModule) {
       return obj;
@@ -2341,7 +2341,7 @@ var require_base2 = __commonJS(function(exports) {
     var ast = _parser2["default"].parse(input);
     return ast;
   }
-  function parse(input, options) {
+  function parse2(input, options) {
     var ast = parseWithoutProcessing(input, options);
     var strip = new _whitespaceControl2["default"](options);
     return strip.accept(ast);
@@ -2523,13 +2523,13 @@ var require_compiler = __commonJS(function(exports) {
       }
     },
     ambiguousSexpr: function ambiguousSexpr(sexpr, program, inverse) {
-      var path = sexpr.path, name = path.parts[0], isBlock = program != null || inverse != null;
+      var path = sexpr.path, name = path.parts[0], isBlock2 = program != null || inverse != null;
       this.opcode("getContext", path.depth);
       this.opcode("pushProgram", program);
       this.opcode("pushProgram", inverse);
       path.strict = true;
       this.accept(path);
-      this.opcode("invokeAmbiguous", name, isBlock);
+      this.opcode("invokeAmbiguous", name, isBlock2);
     },
     simpleSexpr: function simpleSexpr(sexpr) {
       var path = sexpr.path;
@@ -2565,8 +2565,8 @@ var require_compiler = __commonJS(function(exports) {
         this.opcode("lookupOnContext", path.parts, path.falsy, path.strict, scoped);
       }
     },
-    StringLiteral: function StringLiteral(string) {
-      this.opcode("pushString", string.value);
+    StringLiteral: function StringLiteral(string2) {
+      this.opcode("pushString", string2.value);
     },
     NumberLiteral: function NumberLiteral(number) {
       this.opcode("pushLiteral", number.value);
@@ -2581,13 +2581,13 @@ var require_compiler = __commonJS(function(exports) {
       this.opcode("pushLiteral", "null");
     },
     Hash: function Hash(hash) {
-      var pairs = hash.pairs, i = 0, l = pairs.length;
+      var pairs2 = hash.pairs, i = 0, l = pairs2.length;
       this.opcode("pushHash");
       for (;i < l; i++) {
-        this.pushParam(pairs[i].value);
+        this.pushParam(pairs2[i].value);
       }
       while (i--) {
-        this.opcode("assignToHash", pairs[i].key);
+        this.opcode("assignToHash", pairs2[i].key);
       }
       this.opcode("popHash");
     },
@@ -3165,11 +3165,11 @@ var require_array_set = __commonJS(function(exports) {
     this._set = hasNativeMap ? new Map : Object.create(null);
   }
   ArraySet.fromArray = function ArraySet_fromArray(aArray, aAllowDuplicates) {
-    var set = new ArraySet;
+    var set2 = new ArraySet;
     for (var i = 0, len = aArray.length;i < len; i++) {
-      set.add(aArray[i], aAllowDuplicates);
+      set2.add(aArray[i], aAllowDuplicates);
     }
-    return set;
+    return set2;
   };
   ArraySet.prototype.size = function ArraySet_size() {
     return hasNativeMap ? this._set.size : Object.getOwnPropertyNames(this._set).length;
@@ -3507,22 +3507,22 @@ var require_source_map_generator = __commonJS(function(exports) {
     }, this);
   };
   SourceMapGenerator.prototype.toJSON = function SourceMapGenerator_toJSON() {
-    var map = {
+    var map2 = {
       version: this._version,
       sources: this._sources.toArray(),
       names: this._names.toArray(),
       mappings: this._serializeMappings()
     };
     if (this._file != null) {
-      map.file = this._file;
+      map2.file = this._file;
     }
     if (this._sourceRoot != null) {
-      map.sourceRoot = this._sourceRoot;
+      map2.sourceRoot = this._sourceRoot;
     }
     if (this._sourcesContents) {
-      map.sourcesContent = this._generateSourcesContent(map.sources, map.sourceRoot);
+      map2.sourcesContent = this._generateSourcesContent(map2.sources, map2.sourceRoot);
     }
-    return map;
+    return map2;
   };
   SourceMapGenerator.prototype.toString = function SourceMapGenerator_toString() {
     return JSON.stringify(this.toJSON());
@@ -4361,7 +4361,7 @@ var require_source_node = __commonJS(function(exports) {
       line: 1,
       column: 0
     };
-    var map = new SourceMapGenerator(aArgs);
+    var map2 = new SourceMapGenerator(aArgs);
     var sourceMappingActive = false;
     var lastOriginalSource = null;
     var lastOriginalLine = null;
@@ -4371,7 +4371,7 @@ var require_source_node = __commonJS(function(exports) {
       generated.code += chunk;
       if (original.source !== null && original.line !== null && original.column !== null) {
         if (lastOriginalSource !== original.source || lastOriginalLine !== original.line || lastOriginalColumn !== original.column || lastOriginalName !== original.name) {
-          map.addMapping({
+          map2.addMapping({
             source: original.source,
             original: {
               line: original.line,
@@ -4390,7 +4390,7 @@ var require_source_node = __commonJS(function(exports) {
         lastOriginalName = original.name;
         sourceMappingActive = true;
       } else if (sourceMappingActive) {
-        map.addMapping({
+        map2.addMapping({
           generated: {
             line: generated.line,
             column: generated.column
@@ -4407,7 +4407,7 @@ var require_source_node = __commonJS(function(exports) {
             lastOriginalSource = null;
             sourceMappingActive = false;
           } else if (sourceMappingActive) {
-            map.addMapping({
+            map2.addMapping({
               source: original.source,
               original: {
                 line: original.line,
@@ -4426,9 +4426,9 @@ var require_source_node = __commonJS(function(exports) {
       }
     });
     this.walkSourceContents(function(sourceFile, sourceContent) {
-      map.setSourceContent(sourceFile, sourceContent);
+      map2.setSourceContent(sourceFile, sourceContent);
     });
-    return { code: generated.code, map };
+    return { code: generated.code, map: map2 };
   };
   exports.SourceNode = SourceNode;
 });
@@ -4497,7 +4497,7 @@ var require_code_gen = __commonJS(function(exports, module) {
     this.source = [];
   }
   CodeGen.prototype = {
-    isEmpty: function isEmpty() {
+    isEmpty: function isEmpty2() {
       return !this.source.length;
     },
     prepend: function prepend(source, loc) {
@@ -4506,7 +4506,7 @@ var require_code_gen = __commonJS(function(exports, module) {
     push: function push(source, loc) {
       this.source.push(this.wrap(source, loc));
     },
-    merge: function merge() {
+    merge: function merge2() {
       var source = this.empty();
       this.each(function(line) {
         source.add(["  ", line, `
@@ -4535,19 +4535,19 @@ var require_code_gen = __commonJS(function(exports, module) {
       params = this.generateList(params);
       return this.wrap([fn, type ? "." + type + "(" : "(", params, ")"]);
     },
-    quotedString: function quotedString(str) {
+    quotedString: function quotedString2(str) {
       return '"' + (str + "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029") + '"';
     },
     objectLiteral: function objectLiteral(obj) {
       var _this = this;
-      var pairs = [];
+      var pairs2 = [];
       Object.keys(obj).forEach(function(key) {
         var value = castChunk(obj[key], _this);
         if (value !== "undefined") {
-          pairs.push([_this.quotedString(key), ":", value]);
+          pairs2.push([_this.quotedString(key), ":", value]);
         }
       });
-      var ret = this.generateList(pairs);
+      var ret = this.generateList(pairs2);
       ret.prepend("{");
       ret.add("}");
       return ret;
@@ -4917,14 +4917,14 @@ var require_javascript_compiler = __commonJS(function(exports, module) {
     resolvePossibleLambda: function resolvePossibleLambda() {
       this.push([this.aliasable("container.lambda"), "(", this.popStack(), ", ", this.contextName(0), ")"]);
     },
-    pushStringParam: function pushStringParam(string, type) {
+    pushStringParam: function pushStringParam(string2, type) {
       this.pushContext();
       this.pushString(type);
       if (type !== "SubExpression") {
-        if (typeof string === "string") {
-          this.pushString(string);
+        if (typeof string2 === "string") {
+          this.pushString(string2);
         } else {
-          this.pushStackLiteral(string);
+          this.pushStackLiteral(string2);
         }
       }
     },
@@ -4956,8 +4956,8 @@ var require_javascript_compiler = __commonJS(function(exports, module) {
       }
       this.push(this.objectLiteral(hash.values));
     },
-    pushString: function pushString(string) {
-      this.pushStackLiteral(this.quotedString(string));
+    pushString: function pushString(string2) {
+      this.pushStackLiteral(this.quotedString(string2));
     },
     pushLiteral: function pushLiteral(value) {
       this.pushStackLiteral(value);
@@ -5219,7 +5219,7 @@ var require_javascript_compiler = __commonJS(function(exports, module) {
         return "depth" + context;
       }
     },
-    quotedString: function quotedString(str) {
+    quotedString: function quotedString2(str) {
       return this.source.quotedString(str);
     },
     objectLiteral: function objectLiteral(obj) {
@@ -5382,9 +5382,6 @@ var require_handlebars = __commonJS(function(exports, module) {
   exports.default = inst;
   module.exports = exports["default"];
 });
-
-// src/frontend.ts
-var import_handlebars2 = __toESM(require_handlebars(), 1);
 // tracker-card-templates/bento-style-tracker.json
 var bento_style_tracker_default = {
   templateName: "Bento Style Tracker",
@@ -18260,6 +18257,137 @@ function normalizeTrackerData(data) {
   };
 }
 
+// src/frontendReadyGate.ts
+var READY_MIN_VERSION = [1, 0, 6];
+function parseVersionSegment(segment) {
+  if (!segment)
+    return 0;
+  const match = segment.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+function isVersionAtLeast(version, minimum) {
+  const parts = version.split(".");
+  for (let index = 0;index < minimum.length; index += 1) {
+    const current = parseVersionSegment(parts[index]);
+    const required = minimum[index];
+    if (current > required)
+      return true;
+    if (current < required)
+      return false;
+  }
+  return true;
+}
+async function shouldBroadcastReadyForHost() {
+  try {
+    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
+    if (!response.ok)
+      return true;
+    const payload = await response.json();
+    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
+    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
+  } catch {
+    return true;
+  }
+}
+function createReadyGate(ctx) {
+  const readyContext = ctx;
+  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
+    return {
+      dispose() {},
+      release() {}
+    };
+  }
+  readyContext.deferReady();
+  const shouldBroadcastReady = shouldBroadcastReadyForHost();
+  let disposed = false;
+  let released = false;
+  return {
+    dispose() {
+      disposed = true;
+    },
+    release() {
+      if (disposed || released)
+        return;
+      released = true;
+      shouldBroadcastReady.then((allowed) => {
+        if (!disposed && allowed) {
+          readyContext.ready?.();
+        }
+      });
+    }
+  };
+}
+
+// src/frontendTemplate.ts
+var import_handlebars = __toESM(require_handlebars(), 1);
+var TEMPLATE_CACHE = new Map;
+function resolveTrackerMountMode(preset) {
+  const fromPreset = typeof preset.templatePosition === "string" ? preset.templatePosition : "";
+  const htmlTemplate = decodeTemplateHtml(preset.htmlTemplate);
+  const fromHtml = htmlTemplate ? htmlTemplate.match(/<!--\s*POSITION:\s*([A-Za-z_ -]+)\s*-->/i)?.[1] || "" : "";
+  const raw = (fromPreset || fromHtml || "BOTTOM").trim().toUpperCase();
+  if (raw === "TOP")
+    return "message_top";
+  if (raw === "LEFT")
+    return "side_left";
+  if (raw === "RIGHT")
+    return "side_right";
+  return "message_bottom";
+}
+function decodeTemplateHtml(htmlTemplate) {
+  const raw = htmlTemplate || "";
+  if (!/&lt;(?:!--|style|div|script|section|article|span)\b/i.test(raw))
+    return raw;
+  return raw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+}
+function extractTemplateLogic(htmlTemplate) {
+  const decoded = decodeTemplateHtml(htmlTemplate);
+  if (!decoded)
+    return null;
+  const scriptRegex = /<script\s+type=["']text\/x-handlebars-template-logic["'][^>]*>([\s\S]*?)<\/script>/i;
+  const match = decoded.match(scriptRegex);
+  if (!match?.[1])
+    return null;
+  return match[1].trim();
+}
+function executeTemplateLogic(input, templateType, preset) {
+  const logic = extractTemplateLogic(preset.htmlTemplate);
+  if (!logic)
+    return input;
+  try {
+    const fn = new Function("data", "templateType", `"use strict";
+${logic}
+; return data;`);
+    return fn(input, templateType);
+  } catch {
+    return input;
+  }
+}
+function extractCardTemplate(htmlTemplate) {
+  const raw = decodeTemplateHtml(htmlTemplate);
+  const start = raw.indexOf("<!-- CARD_TEMPLATE_START -->");
+  const end = raw.indexOf("<!-- CARD_TEMPLATE_END -->");
+  if (start !== -1 && end !== -1 && end > start) {
+    return raw.substring(start + "<!-- CARD_TEMPLATE_START -->".length, end).trim();
+  }
+  return raw.trim();
+}
+function compileTemplate(preset) {
+  const html = extractCardTemplate(preset.htmlTemplate);
+  if (!html)
+    return null;
+  const cached = TEMPLATE_CACHE.get(preset.id);
+  if (cached?.source === html)
+    return cached.compiled;
+  try {
+    const compiled = import_handlebars.default.compile(html);
+    TEMPLATE_CACHE.set(preset.id, { source: html, compiled });
+    return compiled;
+  } catch {
+    return null;
+  }
+}
+
 // src/trackerViewData.ts
 function normalizeCharacters(data) {
   if (Array.isArray(data.characters))
@@ -18334,362 +18462,6 @@ function calculateStatChanges(currentCharacters, previous) {
     changes[name] = out;
   }
   return changes;
-}
-
-// src/frontendReadyGate.ts
-var READY_MIN_VERSION = [1, 0, 6];
-function parseVersionSegment(segment) {
-  if (!segment)
-    return 0;
-  const match = segment.match(/\d+/);
-  return match ? Number(match[0]) : 0;
-}
-function isVersionAtLeast(version, minimum) {
-  const parts = version.split(".");
-  for (let index = 0;index < minimum.length; index += 1) {
-    const current = parseVersionSegment(parts[index]);
-    const required = minimum[index];
-    if (current > required)
-      return true;
-    if (current < required)
-      return false;
-  }
-  return true;
-}
-async function shouldBroadcastReadyForHost() {
-  try {
-    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
-    if (!response.ok)
-      return true;
-    const payload = await response.json();
-    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
-    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
-  } catch {
-    return true;
-  }
-}
-function createReadyGate(ctx) {
-  const readyContext = ctx;
-  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
-    return {
-      dispose() {},
-      release() {}
-    };
-  }
-  readyContext.deferReady();
-  const shouldBroadcastReady = shouldBroadcastReadyForHost();
-  let disposed = false;
-  let released = false;
-  return {
-    dispose() {
-      disposed = true;
-    },
-    release() {
-      if (disposed || released)
-        return;
-      released = true;
-      shouldBroadcastReady.then((allowed) => {
-        if (!disposed && allowed) {
-          readyContext.ready?.();
-        }
-      });
-    }
-  };
-}
-
-// src/inlineTemplates.ts
-var import_handlebars = __toESM(require_handlebars(), 1);
-var LEGACY_MARKER_REGEX = /\[\[(?:DISPLAY|D)=([^,\]]+),\s*DATA=(\{[\s\S]*?\})\s*\]\]/g;
-var INLINE_TAG = "sst-inline";
-var MARKER_CLASS = "sst-inline-render";
-var MAX_ITERATIONS = 32;
-var templateCache = new Map;
-function hashString(s) {
-  let h = 0;
-  for (let i = 0;i < s.length; i += 1) {
-    h = (h << 5) - h + s.charCodeAt(i);
-    h |= 0;
-  }
-  return h.toString(36);
-}
-function compileInline(name, html) {
-  const key = `${name}:${hashString(html)}`;
-  let fn = templateCache.get(key);
-  if (!fn) {
-    fn = import_handlebars.default.compile(html);
-    templateCache.set(key, fn);
-  }
-  return fn;
-}
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function renderErrorSpan(name, reason, detail) {
-  const suffix = detail ? ` ${escapeHtml(detail)}` : "";
-  return `<span class="sst-inline-error" style="color:#e66;font-style:italic;">[${reason}: ${escapeHtml(name)}${suffix}]</span>`;
-}
-function collectInlineDefs(config, preset) {
-  const out = [];
-  const presetInline = preset.inlineTemplates;
-  if (preset.inlineTemplatesEnabled === true && Array.isArray(presetInline)) {
-    out.push(...presetInline);
-  }
-  for (const pack of config.inlinePacks) {
-    if (pack && pack.enabled === false)
-      continue;
-    const packInline = pack?.inlineTemplates;
-    if (Array.isArray(packInline))
-      out.push(...packInline);
-  }
-  return out;
-}
-function parseJsonish(raw) {
-  const cleaned = raw.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
-  const normalized = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
-  try {
-    const parsed = JSON.parse(normalized);
-    if (!parsed || typeof parsed !== "object")
-      return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-function renderTemplateHtml(name, data, def, allDefs, config) {
-  if (!def || typeof def.htmlContent !== "string") {
-    const enabledPacks = config.inlinePacks.filter((p) => p && p.enabled !== false).length;
-    const detail = `(${enabledPacks} pack${enabledPacks === 1 ? "" : "s"}, ${allDefs.length} template${allDefs.length === 1 ? "" : "s"} loaded)`;
-    return renderErrorSpan(name, "Unknown inline template", detail);
-  }
-  try {
-    return compileInline(name, def.htmlContent)(data);
-  } catch {
-    return renderErrorSpan(name, "Inline render error");
-  }
-}
-function buildContainer(name, html) {
-  const container = document.createElement("span");
-  container.className = MARKER_CLASS;
-  container.setAttribute("data-sst-inline-template", name);
-  container.innerHTML = html;
-  return container;
-}
-function collectTextNodes(root) {
-  const out = [];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let n = walker.nextNode();
-  while (n) {
-    out.push(n);
-    n = walker.nextNode();
-  }
-  return out;
-}
-function locateOffset(nodes, globalOffset) {
-  let pos = 0;
-  for (const node of nodes) {
-    const len = (node.nodeValue ?? "").length;
-    if (globalOffset <= pos + len) {
-      return { node, offset: globalOffset - pos };
-    }
-    pos += len;
-  }
-  const last = nodes[nodes.length - 1];
-  if (last && globalOffset === pos)
-    return { node: last, offset: (last.nodeValue ?? "").length };
-  return null;
-}
-function processTagElements(root, config, preset, artifacts) {
-  const tagNodes = Array.from(root.querySelectorAll(INLINE_TAG));
-  if (tagNodes.length === 0)
-    return;
-  const allDefs = collectInlineDefs(config, preset);
-  for (const el of tagNodes) {
-    const name = (el.getAttribute("name") || el.getAttribute("template") || "").trim();
-    if (!name)
-      continue;
-    const attrData = el.getAttribute("data");
-    const dataRaw = attrData !== null && attrData !== "" ? attrData : el.textContent ?? "{}";
-    const data = parseJsonish(dataRaw);
-    const def = allDefs.find((t) => t.insertName === name) ?? null;
-    const rendered = data === null ? renderErrorSpan(name, "Invalid inline template data") : renderTemplateHtml(name, data, def, allDefs, config);
-    const container = buildContainer(name, rendered);
-    el.replaceWith(container);
-    artifacts.push(container);
-  }
-}
-function processLegacyMarkers(root, config, preset, artifacts) {
-  for (let i = 0;i < MAX_ITERATIONS; i += 1) {
-    const textNodes = collectTextNodes(root);
-    if (textNodes.length === 0)
-      return;
-    const fullText = textNodes.map((n) => n.nodeValue ?? "").join("");
-    if (!fullText.includes("[["))
-      return;
-    LEGACY_MARKER_REGEX.lastIndex = 0;
-    const match = LEGACY_MARKER_REGEX.exec(fullText);
-    if (!match)
-      return;
-    const startLoc = locateOffset(textNodes, match.index);
-    const endLoc = locateOffset(textNodes, match.index + match[0].length);
-    if (!startLoc || !endLoc)
-      return;
-    const name = (match[1] || "").trim();
-    const data = parseJsonish(match[2] || "{}");
-    const allDefs = collectInlineDefs(config, preset);
-    const def = allDefs.find((t) => t.insertName === name) ?? null;
-    const rendered = data === null ? renderErrorSpan(name, "Invalid inline template data") : renderTemplateHtml(name, data, def, allDefs, config);
-    const range = document.createRange();
-    try {
-      range.setStart(startLoc.node, startLoc.offset);
-      range.setEnd(endLoc.node, endLoc.offset);
-    } catch {
-      return;
-    }
-    range.deleteContents();
-    const container = buildContainer(name, rendered);
-    range.insertNode(container);
-    artifacts.push(container);
-  }
-}
-function createInlineTemplateProcessor(deps) {
-  const artifactsByMessage = new Map;
-  const clearMessage = (messageId) => {
-    const list = artifactsByMessage.get(messageId);
-    if (!list)
-      return;
-    for (const el of list) {
-      if (el.isConnected)
-        el.remove();
-    }
-    artifactsByMessage.delete(messageId);
-  };
-  const processMessage = (messageId) => {
-    if (!messageId)
-      return;
-    const config = deps.getConfig();
-    const preset = deps.getPreset();
-    const presetInline = preset.inlineTemplates;
-    const hasPresetInline = preset.inlineTemplatesEnabled === true && Array.isArray(presetInline) && presetInline.length > 0;
-    clearMessage(messageId);
-    if (!config.enableInlineTemplates && !hasPresetInline)
-      return;
-    const effectiveConfig = config.enableInlineTemplates ? config : { ...config, inlinePacks: [] };
-    const messageNode = document.querySelector(`[data-message-id="${messageId}"]`);
-    if (!messageNode)
-      return;
-    const proseNodes = Array.from(messageNode.querySelectorAll("div[class*='prose']"));
-    const roots = proseNodes.length > 0 ? proseNodes : [messageNode];
-    const messageArtifacts = [];
-    for (const root of roots) {
-      processTagElements(root, effectiveConfig, preset, messageArtifacts);
-      processLegacyMarkers(root, effectiveConfig, preset, messageArtifacts);
-    }
-    if (messageArtifacts.length > 0) {
-      artifactsByMessage.set(messageId, messageArtifacts);
-    }
-  };
-  const processAll = () => {
-    const hosts = Array.from(document.querySelectorAll("[data-message-id]"));
-    for (const el of hosts) {
-      const id = el.getAttribute("data-message-id");
-      if (id)
-        processMessage(id);
-    }
-  };
-  const collectMessageIdsInNode = (node) => {
-    const ids = [];
-    if (!(node instanceof Element))
-      return ids;
-    if (node.hasAttribute("data-message-id")) {
-      const id = node.getAttribute("data-message-id");
-      if (id)
-        ids.push(id);
-    }
-    const nested = node.querySelectorAll?.("[data-message-id]");
-    if (nested) {
-      for (let i = 0;i < nested.length; i += 1) {
-        const id = nested[i].getAttribute("data-message-id");
-        if (id)
-          ids.push(id);
-      }
-    }
-    return ids;
-  };
-  const observeDocument = () => {
-    const pending = new Set;
-    let scheduled = false;
-    const flush = () => {
-      scheduled = false;
-      for (const id of pending) {
-        const prior = artifactsByMessage.get(id);
-        if (prior && prior.length > 0 && prior.some((el) => el.isConnected))
-          continue;
-        processMessage(id);
-      }
-      pending.clear();
-    };
-    const schedule = () => {
-      if (scheduled)
-        return;
-      scheduled = true;
-      queueMicrotask(flush);
-    };
-    const isOurNode = (node) => node instanceof Element && node.classList.contains("sst-inline-render");
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        if (m.target instanceof Element && m.target.closest?.(".sst-inline-render"))
-          continue;
-        if (m.type === "childList") {
-          let added = 0;
-          for (const node of Array.from(m.addedNodes)) {
-            if (isOurNode(node))
-              continue;
-            added += 1;
-            for (const id of collectMessageIdsInNode(node))
-              pending.add(id);
-          }
-          let removed = 0;
-          for (const node of Array.from(m.removedNodes)) {
-            if (!isOurNode(node))
-              removed += 1;
-          }
-          if (added === 0 && removed === 0)
-            continue;
-          if (m.target instanceof Element && m.target.closest?.("[data-message-id]")) {
-            const host = m.target.closest("[data-message-id]");
-            const id = host?.getAttribute("data-message-id");
-            if (id)
-              pending.add(id);
-          }
-        } else if (m.type === "characterData" && m.target.parentNode instanceof Element) {
-          const host = m.target.parentNode.closest("[data-message-id]");
-          const id = host?.getAttribute("data-message-id");
-          if (id)
-            pending.add(id);
-        } else if (m.type === "attributes" && m.target instanceof Element && m.attributeName === "data-message-id") {
-          const id = m.target.getAttribute("data-message-id");
-          if (id)
-            pending.add(id);
-        }
-      }
-      if (pending.size > 0)
-        schedule();
-    });
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["data-message-id"]
-    });
-    return () => observer.disconnect();
-  };
-  const destroy = () => {
-    for (const id of Array.from(artifactsByMessage.keys()))
-      clearMessage(id);
-    artifactsByMessage.clear();
-  };
-  return { processMessage, processAll, clearMessage, observeDocument, destroy };
 }
 
 // src/colorUtils.ts
@@ -19202,52 +18974,114 @@ function analShaftTopY(stats) {
   return ANAL_OPENING_Y - depth / 100 * (ANAL_OPENING_Y - ANAL_DEEP_Y);
 }
 
-// src/frontend.ts
-var FERTILITY_CYCLE_BIAS_VALUES = [
-  "random",
-  "menstruating",
-  "start_follicular",
-  "close_ovulation",
-  "ovulating",
-  "start_luteal",
-  "end_luteal"
-];
-var DEFAULT_CONFIG = {
-  trackerTagName: "tracker",
-  codeBlockIdentifier: "sim",
-  hideSimBlocks: true,
-  templateId: "bento-style-tracker",
-  trackerFormat: "json",
-  retainTrackerCount: 3,
-  enableInlineTemplates: false,
-  userPresets: [],
-  inlinePacks: [],
-  useSecondaryLLM: false,
-  secondaryLLMConnectionId: "",
-  secondaryLLMModel: "",
-  secondaryLLMMessageCount: 5,
-  secondaryLLMTemperature: 0.7,
-  secondaryLLMStripHTML: true,
-  fertilityCycleBias: "random",
-  typeSafeEnabled: false,
-  typeSafeApiKey: "",
-  typeSafeModel: "jev-latest",
-  typeSafeQuickAppend: true,
-  typeSafeVerify: true,
-  typeSafeConception: true,
-  typeSafeConfidenceFloor: 0.6
-};
-var BUILTIN_PRESETS = getTemplatePresets();
-var runtimeSeededPresets = [];
-var TEMPLATE_CACHE = new Map;
-var helpersRegistered = false;
-var panelRoot = null;
-function byId(id) {
-  const scoped = panelRoot?.querySelector(`#${id}`);
-  if (scoped)
-    return scoped;
-  return document.getElementById(id);
+// src/frontendTemplateRenderer.ts
+function getReactionEmoji(value) {
+  const num = Number(value);
+  if (num === 1)
+    return "❤️";
+  if (num === 2)
+    return "\uD83D\uDE21";
+  return "\uD83D\uDE10";
 }
+function buildTemplateData(data, preset, previousData) {
+  const worldData = data.worldData || {};
+  const configuredMaxCharacters = Number(preset.extSettings?.maxCharacters);
+  const maxCharacters = Number.isFinite(configuredMaxCharacters) && configuredMaxCharacters > 0 ? Math.floor(configuredMaxCharacters) : Number.POSITIVE_INFINITY;
+  const characters = normalizeCharacters(data).slice(0, maxCharacters);
+  const currentDate = typeof worldData.current_date === "string" ? worldData.current_date : "Unknown Date";
+  const currentTime = typeof worldData.current_time === "string" ? worldData.current_time : "Unknown Time";
+  const tabbed = (preset.htmlTemplate || "").includes("sim-tracker-tabs") || preset.id.includes("tabs");
+  const trackerLevel = preset.extSettings?.renderMode === "tracker";
+  const statChanges = calculateStatChanges(characters, previousData);
+  const characterPayload = characters.map((character) => {
+    const stats = character;
+    const name = typeof stats.name === "string" ? stats.name : "Character";
+    const bgColor = normalizeHexColor(stats.bg);
+    const isNestedStats = stats && typeof stats === "object" && typeof stats.stats === "object" && stats.stats !== null;
+    const templateStats = isNestedStats ? { ...stats, ...stats.stats } : { ...stats };
+    if (isNestedStats) {
+      delete templateStats.stats;
+    }
+    const normalizedCycleStage = typeof templateStats.cycle_stage === "string" ? templateStats.cycle_stage.toLowerCase() : templateStats.cycle_stage;
+    const normalizedSex = typeof templateStats.sex === "string" ? templateStats.sex.toLowerCase() : templateStats.sex;
+    const resolvedStats = {
+      ...templateStats,
+      sex: normalizedSex,
+      cycle_stage: normalizedCycleStage,
+      ...statChanges[name] || {},
+      internal_thought: stats.internal_thought || stats.thought || "No thought recorded.",
+      relationshipStatus: stats.relationshipStatus || "Unknown Status",
+      desireStatus: stats.desireStatus || "Unknown Desire",
+      inactive: Boolean(stats.inactive),
+      inactiveReason: Number(stats.inactiveReason || 0)
+    };
+    return {
+      name,
+      characterName: name,
+      currentDate,
+      currentTime,
+      stats: resolvedStats,
+      breastGeometry: computeBreastGeometry(resolvedStats),
+      bgColor,
+      darkerBgColor: darkenColor(bgColor),
+      reactionEmoji: getReactionEmoji(stats.last_react),
+      healthIcon: Number(stats.health) === 1 ? "\uD83E\uDD15" : Number(stats.health) === 2 ? "\uD83D\uDC80" : null,
+      showThoughtBubble: true
+    };
+  });
+  if (tabbed || trackerLevel) {
+    return {
+      renderMode: trackerLevel ? "tracker" : "tabbed",
+      input: {
+        characters: characterPayload,
+        worldData,
+        currentDate,
+        currentTime
+      },
+      fallbackRaw: JSON.stringify(data, null, 2)
+    };
+  }
+  return {
+    renderMode: "single",
+    input: {
+      characters: characterPayload,
+      worldData,
+      currentDate,
+      currentTime
+    },
+    fallbackRaw: JSON.stringify(data, null, 2)
+  };
+}
+function buildTrackerMarkup(data, preset, previousData) {
+  const compiled = compileTemplate(preset);
+  if (!compiled) {
+    return { html: null, fallbackRaw: rawJson(data) };
+  }
+  const prep = buildTemplateData(data, preset, previousData);
+  try {
+    let cardsHtml = "";
+    if (prep.renderMode !== "single") {
+      const transformed = executeTemplateLogic(prep.input, prep.renderMode, preset);
+      cardsHtml = compiled(transformed);
+    } else {
+      const inputChars = prep.input.characters || [];
+      cardsHtml = inputChars.map((item) => compiled(executeTemplateLogic(item, "single", preset))).join("");
+    }
+    const wrapped = `<div id="silly-sim-tracker-container" style="width:100%;">${cardsHtml}</div>`;
+    return { html: wrapped, fallbackRaw: prep.fallbackRaw };
+  } catch {
+    return { html: null, fallbackRaw: prep.fallbackRaw };
+  }
+}
+function rawJson(data) {
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch {
+    return "{}";
+  }
+}
+
+// src/frontendPanel.ts
 var DEFAULT_PANEL_STATUS = "Waiting for tracker tag...";
 var LOADING_CONFIG_STATUS = "Loading config...";
 var CONFIG_ERROR_STATUS_PREFIX = "Config load failed:";
@@ -19392,6 +19226,427 @@ var PANEL_CSS = `
   .sst-message-tracker-host { width: 100%; }
   .sst-theme-tactical #silly-sim-tracker-container { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lumiverse-accent) 15%, transparent); }
 `;
+
+// src/frontendTemplateHelpers.ts
+var import_handlebars2 = __toESM(require_handlebars(), 1);
+var helpersRegistered = false;
+function registerTemplateHelpers() {
+  if (helpersRegistered)
+    return;
+  helpersRegistered = true;
+  import_handlebars2.default.registerHelper("eq", (a, b) => a === b);
+  import_handlebars2.default.registerHelper("eqi", (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase());
+  import_handlebars2.default.registerHelper("cycleStage", cycleStage);
+  import_handlebars2.default.registerHelper("cycleStageId", cycleStageId);
+  import_handlebars2.default.registerHelper("cycleStageLabel", cycleStageLabel);
+  import_handlebars2.default.registerHelper("cervixState", cervixState);
+  import_handlebars2.default.registerHelper("cervixStateLabel", cervixStateLabel);
+  import_handlebars2.default.registerHelper("cervixOsR", cervixOsR);
+  import_handlebars2.default.registerHelper("cervixOsClass", cervixOsClass);
+  import_handlebars2.default.registerHelper("fertilityRiskLabel", fertilityRiskLabel);
+  import_handlebars2.default.registerHelper("fertilityRiskClass", fertilityRiskClass);
+  import_handlebars2.default.registerHelper("hasFertilityTracking", hasFemaleBiology);
+  import_handlebars2.default.registerHelper("hasRefractoryTracking", hasMaleBiology);
+  import_handlebars2.default.registerHelper("hasMaleBiology", hasMaleBiology);
+  import_handlebars2.default.registerHelper("hasFemaleBiology", hasFemaleBiology);
+  import_handlebars2.default.registerHelper("isConceived", isConceived);
+  import_handlebars2.default.registerHelper("clampPercent", clampPercent);
+  import_handlebars2.default.registerHelper("percentOf", percentOf);
+  import_handlebars2.default.registerHelper("maleFertilityLabel", maleFertilityLabel);
+  import_handlebars2.default.registerHelper("maleFertilityPercent", maleFertilityPercent);
+  import_handlebars2.default.registerHelper("semenPercent", semenPercent);
+  import_handlebars2.default.registerHelper("wombFillTop", wombFillTop);
+  import_handlebars2.default.registerHelper("wombFillHeight", wombFillHeight);
+  import_handlebars2.default.registerHelper("vagShaftTopY", vagShaftTopY);
+  import_handlebars2.default.registerHelper("vagDepthBar", vagDepthBar);
+  import_handlebars2.default.registerHelper("analShaftTopY", analShaftTopY);
+  import_handlebars2.default.registerHelper("hasAnalTracking", hasAnalTracking);
+  import_handlebars2.default.registerHelper("hasProstateTracking", hasProstateTracking);
+  import_handlebars2.default.registerHelper("hasLactationTracking", hasLactationTracking);
+  import_handlebars2.default.registerHelper("milkPercent", milkPercent);
+  import_handlebars2.default.registerHelper("analFillTop", analFillTop);
+  import_handlebars2.default.registerHelper("analFillHeight", analFillHeight);
+  import_handlebars2.default.registerHelper("semenFillTop", semenFillTop);
+  import_handlebars2.default.registerHelper("semenFillHeight", semenFillHeight);
+  import_handlebars2.default.registerHelper("or", function(...args) {
+    const values = args.slice(0, -1);
+    return values.some((v) => !!v);
+  });
+  import_handlebars2.default.registerHelper("and", function(...args) {
+    const values = args.slice(0, -1);
+    return values.every((v) => !!v);
+  });
+  import_handlebars2.default.registerHelper("not", (value) => !value);
+  import_handlebars2.default.registerHelper("gt", (a, b) => Number(a) > Number(b));
+  import_handlebars2.default.registerHelper("gte", (a, b) => Number(a) >= Number(b));
+  import_handlebars2.default.registerHelper("lt", (a, b) => Number(a) < Number(b));
+  import_handlebars2.default.registerHelper("lte", (a, b) => Number(a) <= Number(b));
+  import_handlebars2.default.registerHelper("abs", (a) => Math.abs(Number(a) || 0));
+  import_handlebars2.default.registerHelper("multiply", (a, b) => (Number(a) || 0) * (Number(b) || 0));
+  import_handlebars2.default.registerHelper("subtract", (a, b) => (Number(a) || 0) - (Number(b) || 0));
+  import_handlebars2.default.registerHelper("add", (a, b) => (Number(a) || 0) + (Number(b) || 0));
+  import_handlebars2.default.registerHelper("divide", (a, b) => {
+    const divisor = Number(b) || 0;
+    return divisor === 0 ? 0 : (Number(a) || 0) / divisor;
+  });
+  import_handlebars2.default.registerHelper("divideRoundUp", (a, b) => {
+    const divisor = Number(b) || 0;
+    return divisor === 0 ? 0 : Math.ceil((Number(a) || 0) / divisor);
+  });
+  import_handlebars2.default.registerHelper("tabZIndex", (i) => 5 - (Number(i) || 0));
+  import_handlebars2.default.registerHelper("tabOffset", (i) => (Number(i) || 0) * 65);
+  import_handlebars2.default.registerHelper("initials", (name) => typeof name === "string" && name.length ? name.charAt(0).toUpperCase() : "?");
+  import_handlebars2.default.registerHelper("rawFirstLetter", (name) => typeof name === "string" && name.length ? name.charAt(0) : "?");
+  import_handlebars2.default.registerHelper("slugifyUnderscore", (name) => typeof name === "string" ? name.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s-]+/g, "_") : "");
+  import_handlebars2.default.registerHelper("slugifyDash", (name) => typeof name === "string" ? name.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-") : "");
+  import_handlebars2.default.registerHelper("camelCase", (name) => {
+    if (typeof name !== "string")
+      return "";
+    return name.toLowerCase().replace(/[^a-z0-9\s]+/g, " ").trim().split(/\s+/).map((part, idx) => idx === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)).join("");
+  });
+  import_handlebars2.default.registerHelper("adjustColorBrightness", (hexColor, brightnessPercent) => adjustColorBrightness(String(hexColor || "#000000"), Number(brightnessPercent) || 100));
+  import_handlebars2.default.registerHelper("adjustHSL", (hexColor, hueShift, saturationAdjust, lightnessAdjust) => adjustHslColor(String(hexColor || "#000000"), Number(hueShift) || 0, Number(saturationAdjust) || 0, Number(lightnessAdjust) || 0));
+}
+
+// src/inlineTemplates.ts
+var import_handlebars3 = __toESM(require_handlebars(), 1);
+var LEGACY_MARKER_REGEX = /\[\[(?:DISPLAY|D)=([^,\]]+),\s*DATA=(\{[\s\S]*?\})\s*\]\]/g;
+var INLINE_TAG = "sst-inline";
+var MARKER_CLASS = "sst-inline-render";
+var MAX_ITERATIONS = 32;
+var templateCache = new Map;
+function hashString(s) {
+  let h = 0;
+  for (let i = 0;i < s.length; i += 1) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return h.toString(36);
+}
+function compileInline(name, html) {
+  const key = `${name}:${hashString(html)}`;
+  let fn = templateCache.get(key);
+  if (!fn) {
+    fn = import_handlebars3.default.compile(html);
+    templateCache.set(key, fn);
+  }
+  return fn;
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function renderErrorSpan(name, reason, detail) {
+  const suffix = detail ? ` ${escapeHtml(detail)}` : "";
+  return `<span class="sst-inline-error" style="color:#e66;font-style:italic;">[${reason}: ${escapeHtml(name)}${suffix}]</span>`;
+}
+function collectInlineDefs(config, preset) {
+  const out = [];
+  const presetInline = preset.inlineTemplates;
+  if (preset.inlineTemplatesEnabled === true && Array.isArray(presetInline)) {
+    out.push(...presetInline);
+  }
+  for (const pack of config.inlinePacks) {
+    if (pack && pack.enabled === false)
+      continue;
+    const packInline = pack?.inlineTemplates;
+    if (Array.isArray(packInline))
+      out.push(...packInline);
+  }
+  return out;
+}
+function parseJsonish(raw) {
+  const cleaned = raw.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+  const normalized = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+  try {
+    const parsed = JSON.parse(normalized);
+    if (!parsed || typeof parsed !== "object")
+      return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function renderTemplateHtml(name, data, def, allDefs, config) {
+  if (!def || typeof def.htmlContent !== "string") {
+    const enabledPacks = config.inlinePacks.filter((p) => p && p.enabled !== false).length;
+    const detail = `(${enabledPacks} pack${enabledPacks === 1 ? "" : "s"}, ${allDefs.length} template${allDefs.length === 1 ? "" : "s"} loaded)`;
+    return renderErrorSpan(name, "Unknown inline template", detail);
+  }
+  try {
+    return compileInline(name, def.htmlContent)(data);
+  } catch {
+    return renderErrorSpan(name, "Inline render error");
+  }
+}
+function buildContainer(name, html) {
+  const container = document.createElement("span");
+  container.className = MARKER_CLASS;
+  container.setAttribute("data-sst-inline-template", name);
+  container.innerHTML = html;
+  return container;
+}
+function collectTextNodes(root) {
+  const out = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let n = walker.nextNode();
+  while (n) {
+    out.push(n);
+    n = walker.nextNode();
+  }
+  return out;
+}
+function locateOffset(nodes, globalOffset) {
+  let pos = 0;
+  for (const node of nodes) {
+    const len = (node.nodeValue ?? "").length;
+    if (globalOffset <= pos + len) {
+      return { node, offset: globalOffset - pos };
+    }
+    pos += len;
+  }
+  const last = nodes[nodes.length - 1];
+  if (last && globalOffset === pos)
+    return { node: last, offset: (last.nodeValue ?? "").length };
+  return null;
+}
+function processTagElements(root, config, preset, artifacts) {
+  const tagNodes = Array.from(root.querySelectorAll(INLINE_TAG));
+  if (tagNodes.length === 0)
+    return;
+  const allDefs = collectInlineDefs(config, preset);
+  for (const el of tagNodes) {
+    const name = (el.getAttribute("name") || el.getAttribute("template") || "").trim();
+    if (!name)
+      continue;
+    const attrData = el.getAttribute("data");
+    const dataRaw = attrData !== null && attrData !== "" ? attrData : el.textContent ?? "{}";
+    const data = parseJsonish(dataRaw);
+    const def = allDefs.find((t) => t.insertName === name) ?? null;
+    const rendered = data === null ? renderErrorSpan(name, "Invalid inline template data") : renderTemplateHtml(name, data, def, allDefs, config);
+    const container = buildContainer(name, rendered);
+    el.replaceWith(container);
+    artifacts.push(container);
+  }
+}
+function processLegacyMarkers(root, config, preset, artifacts) {
+  for (let i = 0;i < MAX_ITERATIONS; i += 1) {
+    const textNodes = collectTextNodes(root);
+    if (textNodes.length === 0)
+      return;
+    const fullText = textNodes.map((n) => n.nodeValue ?? "").join("");
+    if (!fullText.includes("[["))
+      return;
+    LEGACY_MARKER_REGEX.lastIndex = 0;
+    const match = LEGACY_MARKER_REGEX.exec(fullText);
+    if (!match)
+      return;
+    const startLoc = locateOffset(textNodes, match.index);
+    const endLoc = locateOffset(textNodes, match.index + match[0].length);
+    if (!startLoc || !endLoc)
+      return;
+    const name = (match[1] || "").trim();
+    const data = parseJsonish(match[2] || "{}");
+    const allDefs = collectInlineDefs(config, preset);
+    const def = allDefs.find((t) => t.insertName === name) ?? null;
+    const rendered = data === null ? renderErrorSpan(name, "Invalid inline template data") : renderTemplateHtml(name, data, def, allDefs, config);
+    const range = document.createRange();
+    try {
+      range.setStart(startLoc.node, startLoc.offset);
+      range.setEnd(endLoc.node, endLoc.offset);
+    } catch {
+      return;
+    }
+    range.deleteContents();
+    const container = buildContainer(name, rendered);
+    range.insertNode(container);
+    artifacts.push(container);
+  }
+}
+function createInlineTemplateProcessor(deps) {
+  const artifactsByMessage = new Map;
+  const clearMessage = (messageId) => {
+    const list = artifactsByMessage.get(messageId);
+    if (!list)
+      return;
+    for (const el of list) {
+      if (el.isConnected)
+        el.remove();
+    }
+    artifactsByMessage.delete(messageId);
+  };
+  const processMessage = (messageId) => {
+    if (!messageId)
+      return;
+    const config = deps.getConfig();
+    const preset = deps.getPreset();
+    const presetInline = preset.inlineTemplates;
+    const hasPresetInline = preset.inlineTemplatesEnabled === true && Array.isArray(presetInline) && presetInline.length > 0;
+    clearMessage(messageId);
+    if (!config.enableInlineTemplates && !hasPresetInline)
+      return;
+    const effectiveConfig = config.enableInlineTemplates ? config : { ...config, inlinePacks: [] };
+    const messageNode = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageNode)
+      return;
+    const proseNodes = Array.from(messageNode.querySelectorAll("div[class*='prose']"));
+    const roots = proseNodes.length > 0 ? proseNodes : [messageNode];
+    const messageArtifacts = [];
+    for (const root of roots) {
+      processTagElements(root, effectiveConfig, preset, messageArtifacts);
+      processLegacyMarkers(root, effectiveConfig, preset, messageArtifacts);
+    }
+    if (messageArtifacts.length > 0) {
+      artifactsByMessage.set(messageId, messageArtifacts);
+    }
+  };
+  const processAll = () => {
+    const hosts = Array.from(document.querySelectorAll("[data-message-id]"));
+    for (const el of hosts) {
+      const id = el.getAttribute("data-message-id");
+      if (id)
+        processMessage(id);
+    }
+  };
+  const collectMessageIdsInNode = (node) => {
+    const ids = [];
+    if (!(node instanceof Element))
+      return ids;
+    if (node.hasAttribute("data-message-id")) {
+      const id = node.getAttribute("data-message-id");
+      if (id)
+        ids.push(id);
+    }
+    const nested = node.querySelectorAll?.("[data-message-id]");
+    if (nested) {
+      for (let i = 0;i < nested.length; i += 1) {
+        const id = nested[i].getAttribute("data-message-id");
+        if (id)
+          ids.push(id);
+      }
+    }
+    return ids;
+  };
+  const observeDocument = () => {
+    const pending = new Set;
+    let scheduled = false;
+    const flush = () => {
+      scheduled = false;
+      for (const id of pending) {
+        const prior = artifactsByMessage.get(id);
+        if (prior && prior.length > 0 && prior.some((el) => el.isConnected))
+          continue;
+        processMessage(id);
+      }
+      pending.clear();
+    };
+    const schedule = () => {
+      if (scheduled)
+        return;
+      scheduled = true;
+      queueMicrotask(flush);
+    };
+    const isOurNode = (node) => node instanceof Element && node.classList.contains("sst-inline-render");
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.target instanceof Element && m.target.closest?.(".sst-inline-render"))
+          continue;
+        if (m.type === "childList") {
+          let added = 0;
+          for (const node of Array.from(m.addedNodes)) {
+            if (isOurNode(node))
+              continue;
+            added += 1;
+            for (const id of collectMessageIdsInNode(node))
+              pending.add(id);
+          }
+          let removed = 0;
+          for (const node of Array.from(m.removedNodes)) {
+            if (!isOurNode(node))
+              removed += 1;
+          }
+          if (added === 0 && removed === 0)
+            continue;
+          if (m.target instanceof Element && m.target.closest?.("[data-message-id]")) {
+            const host = m.target.closest("[data-message-id]");
+            const id = host?.getAttribute("data-message-id");
+            if (id)
+              pending.add(id);
+          }
+        } else if (m.type === "characterData" && m.target.parentNode instanceof Element) {
+          const host = m.target.parentNode.closest("[data-message-id]");
+          const id = host?.getAttribute("data-message-id");
+          if (id)
+            pending.add(id);
+        } else if (m.type === "attributes" && m.target instanceof Element && m.attributeName === "data-message-id") {
+          const id = m.target.getAttribute("data-message-id");
+          if (id)
+            pending.add(id);
+        }
+      }
+      if (pending.size > 0)
+        schedule();
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["data-message-id"]
+    });
+    return () => observer.disconnect();
+  };
+  const destroy = () => {
+    for (const id of Array.from(artifactsByMessage.keys()))
+      clearMessage(id);
+    artifactsByMessage.clear();
+  };
+  return { processMessage, processAll, clearMessage, observeDocument, destroy };
+}
+
+// src/frontend.ts
+var FERTILITY_CYCLE_BIAS_VALUES = [
+  "random",
+  "menstruating",
+  "start_follicular",
+  "close_ovulation",
+  "ovulating",
+  "start_luteal",
+  "end_luteal"
+];
+var DEFAULT_CONFIG = {
+  trackerTagName: "tracker",
+  codeBlockIdentifier: "sim",
+  hideSimBlocks: true,
+  templateId: "bento-style-tracker",
+  trackerFormat: "json",
+  retainTrackerCount: 3,
+  enableInlineTemplates: false,
+  userPresets: [],
+  inlinePacks: [],
+  useSecondaryLLM: false,
+  secondaryLLMConnectionId: "",
+  secondaryLLMModel: "",
+  secondaryLLMMessageCount: 5,
+  secondaryLLMTemperature: 0.7,
+  secondaryLLMStripHTML: true,
+  fertilityCycleBias: "random",
+  typeSafeEnabled: false,
+  typeSafeApiKey: "",
+  typeSafeModel: "jev-latest",
+  typeSafeQuickAppend: true,
+  typeSafeVerify: true,
+  typeSafeConception: true,
+  typeSafeConfidenceFloor: 0.6
+};
+var BUILTIN_PRESETS = getTemplatePresets();
+var runtimeSeededPresets = [];
+var panelRoot = null;
+function byId(id) {
+  const scoped = panelRoot?.querySelector(`#${id}`);
+  if (scoped)
+    return scoped;
+  return document.getElementById(id);
+}
 function sanitizeIdentifier(value) {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "sim";
 }
@@ -19470,19 +19725,6 @@ function readMessageContext(payload) {
     isUser: typeof nested?.is_user === "boolean" ? nested.is_user : null
   };
 }
-function resolveTrackerMountMode(preset) {
-  const fromPreset = typeof preset.templatePosition === "string" ? preset.templatePosition : "";
-  const htmlTemplate = decodeTemplateHtml(preset.htmlTemplate);
-  const fromHtml = htmlTemplate ? htmlTemplate.match(/<!--\s*POSITION:\s*([A-Za-z_ -]+)\s*-->/i)?.[1] || "" : "";
-  const raw = (fromPreset || fromHtml || "BOTTOM").trim().toUpperCase();
-  if (raw === "TOP")
-    return "message_top";
-  if (raw === "LEFT")
-    return "side_left";
-  if (raw === "RIGHT")
-    return "side_right";
-  return "message_bottom";
-}
 function setStatus(text) {
   const el = byId("sst-lumi-status");
   if (el)
@@ -19512,213 +19754,6 @@ function renderEmpty(message) {
   p.textContent = message;
   body.appendChild(p);
 }
-function getReactionEmoji(value) {
-  const num = Number(value);
-  if (num === 1)
-    return "❤️";
-  if (num === 2)
-    return "\uD83D\uDE21";
-  return "\uD83D\uDE10";
-}
-function decodeTemplateHtml(htmlTemplate) {
-  const raw = htmlTemplate || "";
-  if (!/&lt;(?:!--|style|div|script|section|article|span)\b/i.test(raw))
-    return raw;
-  return raw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'");
-}
-function extractTemplateLogic(htmlTemplate) {
-  const decoded = decodeTemplateHtml(htmlTemplate);
-  if (!decoded)
-    return null;
-  const scriptRegex = /<script\s+type=["']text\/x-handlebars-template-logic["'][^>]*>([\s\S]*?)<\/script>/i;
-  const match = decoded.match(scriptRegex);
-  if (!match?.[1])
-    return null;
-  return match[1].trim();
-}
-function executeTemplateLogic(input, templateType, preset) {
-  const logic = extractTemplateLogic(preset.htmlTemplate);
-  if (!logic)
-    return input;
-  try {
-    const fn = new Function("data", "templateType", `"use strict";
-${logic}
-; return data;`);
-    return fn(input, templateType);
-  } catch {
-    return input;
-  }
-}
-function registerTemplateHelpers() {
-  if (helpersRegistered)
-    return;
-  helpersRegistered = true;
-  import_handlebars2.default.registerHelper("eq", (a, b) => a === b);
-  import_handlebars2.default.registerHelper("eqi", (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase());
-  import_handlebars2.default.registerHelper("cycleStage", cycleStage);
-  import_handlebars2.default.registerHelper("cycleStageId", cycleStageId);
-  import_handlebars2.default.registerHelper("cycleStageLabel", cycleStageLabel);
-  import_handlebars2.default.registerHelper("cervixState", cervixState);
-  import_handlebars2.default.registerHelper("cervixStateLabel", cervixStateLabel);
-  import_handlebars2.default.registerHelper("cervixOsR", cervixOsR);
-  import_handlebars2.default.registerHelper("cervixOsClass", cervixOsClass);
-  import_handlebars2.default.registerHelper("fertilityRiskLabel", fertilityRiskLabel);
-  import_handlebars2.default.registerHelper("fertilityRiskClass", fertilityRiskClass);
-  import_handlebars2.default.registerHelper("hasFertilityTracking", hasFemaleBiology);
-  import_handlebars2.default.registerHelper("hasRefractoryTracking", hasMaleBiology);
-  import_handlebars2.default.registerHelper("hasMaleBiology", hasMaleBiology);
-  import_handlebars2.default.registerHelper("hasFemaleBiology", hasFemaleBiology);
-  import_handlebars2.default.registerHelper("isConceived", isConceived);
-  import_handlebars2.default.registerHelper("clampPercent", clampPercent);
-  import_handlebars2.default.registerHelper("percentOf", percentOf);
-  import_handlebars2.default.registerHelper("maleFertilityLabel", maleFertilityLabel);
-  import_handlebars2.default.registerHelper("maleFertilityPercent", maleFertilityPercent);
-  import_handlebars2.default.registerHelper("semenPercent", semenPercent);
-  import_handlebars2.default.registerHelper("wombFillTop", wombFillTop);
-  import_handlebars2.default.registerHelper("wombFillHeight", wombFillHeight);
-  import_handlebars2.default.registerHelper("vagShaftTopY", vagShaftTopY);
-  import_handlebars2.default.registerHelper("vagDepthBar", vagDepthBar);
-  import_handlebars2.default.registerHelper("analShaftTopY", analShaftTopY);
-  import_handlebars2.default.registerHelper("hasAnalTracking", hasAnalTracking);
-  import_handlebars2.default.registerHelper("hasProstateTracking", hasProstateTracking);
-  import_handlebars2.default.registerHelper("hasLactationTracking", hasLactationTracking);
-  import_handlebars2.default.registerHelper("milkPercent", milkPercent);
-  import_handlebars2.default.registerHelper("analFillTop", analFillTop);
-  import_handlebars2.default.registerHelper("analFillHeight", analFillHeight);
-  import_handlebars2.default.registerHelper("semenFillTop", semenFillTop);
-  import_handlebars2.default.registerHelper("semenFillHeight", semenFillHeight);
-  import_handlebars2.default.registerHelper("or", function(...args) {
-    const values = args.slice(0, -1);
-    return values.some((v) => !!v);
-  });
-  import_handlebars2.default.registerHelper("and", function(...args) {
-    const values = args.slice(0, -1);
-    return values.every((v) => !!v);
-  });
-  import_handlebars2.default.registerHelper("not", (value) => !value);
-  import_handlebars2.default.registerHelper("gt", (a, b) => Number(a) > Number(b));
-  import_handlebars2.default.registerHelper("gte", (a, b) => Number(a) >= Number(b));
-  import_handlebars2.default.registerHelper("lt", (a, b) => Number(a) < Number(b));
-  import_handlebars2.default.registerHelper("lte", (a, b) => Number(a) <= Number(b));
-  import_handlebars2.default.registerHelper("abs", (a) => Math.abs(Number(a) || 0));
-  import_handlebars2.default.registerHelper("multiply", (a, b) => (Number(a) || 0) * (Number(b) || 0));
-  import_handlebars2.default.registerHelper("subtract", (a, b) => (Number(a) || 0) - (Number(b) || 0));
-  import_handlebars2.default.registerHelper("add", (a, b) => (Number(a) || 0) + (Number(b) || 0));
-  import_handlebars2.default.registerHelper("divide", (a, b) => {
-    const divisor = Number(b) || 0;
-    return divisor === 0 ? 0 : (Number(a) || 0) / divisor;
-  });
-  import_handlebars2.default.registerHelper("divideRoundUp", (a, b) => {
-    const divisor = Number(b) || 0;
-    return divisor === 0 ? 0 : Math.ceil((Number(a) || 0) / divisor);
-  });
-  import_handlebars2.default.registerHelper("tabZIndex", (i) => 5 - (Number(i) || 0));
-  import_handlebars2.default.registerHelper("tabOffset", (i) => (Number(i) || 0) * 65);
-  import_handlebars2.default.registerHelper("initials", (name) => typeof name === "string" && name.length ? name.charAt(0).toUpperCase() : "?");
-  import_handlebars2.default.registerHelper("rawFirstLetter", (name) => typeof name === "string" && name.length ? name.charAt(0) : "?");
-  import_handlebars2.default.registerHelper("slugifyUnderscore", (name) => typeof name === "string" ? name.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s-]+/g, "_") : "");
-  import_handlebars2.default.registerHelper("slugifyDash", (name) => typeof name === "string" ? name.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-") : "");
-  import_handlebars2.default.registerHelper("camelCase", (name) => {
-    if (typeof name !== "string")
-      return "";
-    return name.toLowerCase().replace(/[^a-z0-9\s]+/g, " ").trim().split(/\s+/).map((part, idx) => idx === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)).join("");
-  });
-  import_handlebars2.default.registerHelper("adjustColorBrightness", (hexColor, brightnessPercent) => adjustColorBrightness(String(hexColor || "#000000"), Number(brightnessPercent) || 100));
-  import_handlebars2.default.registerHelper("adjustHSL", (hexColor, hueShift, saturationAdjust, lightnessAdjust) => adjustHslColor(String(hexColor || "#000000"), Number(hueShift) || 0, Number(saturationAdjust) || 0, Number(lightnessAdjust) || 0));
-}
-function extractCardTemplate(htmlTemplate) {
-  const raw = decodeTemplateHtml(htmlTemplate);
-  const start = raw.indexOf("<!-- CARD_TEMPLATE_START -->");
-  const end = raw.indexOf("<!-- CARD_TEMPLATE_END -->");
-  if (start !== -1 && end !== -1 && end > start) {
-    return raw.substring(start + "<!-- CARD_TEMPLATE_START -->".length, end).trim();
-  }
-  return raw.trim();
-}
-function compileTemplate(preset) {
-  const html = extractCardTemplate(preset.htmlTemplate);
-  if (!html)
-    return null;
-  const cached = TEMPLATE_CACHE.get(preset.id);
-  if (cached?.source === html)
-    return cached.compiled;
-  try {
-    const compiled = import_handlebars2.default.compile(html);
-    TEMPLATE_CACHE.set(preset.id, { source: html, compiled });
-    return compiled;
-  } catch {
-    return null;
-  }
-}
-function buildTemplateData(data, preset, previousData) {
-  const worldData = data.worldData || {};
-  const configuredMaxCharacters = Number(preset.extSettings?.maxCharacters);
-  const maxCharacters = Number.isFinite(configuredMaxCharacters) && configuredMaxCharacters > 0 ? Math.floor(configuredMaxCharacters) : Number.POSITIVE_INFINITY;
-  const characters = normalizeCharacters(data).slice(0, maxCharacters);
-  const currentDate = typeof worldData.current_date === "string" ? worldData.current_date : "Unknown Date";
-  const currentTime = typeof worldData.current_time === "string" ? worldData.current_time : "Unknown Time";
-  const tabbed = (preset.htmlTemplate || "").includes("sim-tracker-tabs") || preset.id.includes("tabs");
-  const trackerLevel = preset.extSettings?.renderMode === "tracker";
-  const statChanges = calculateStatChanges(characters, previousData);
-  const characterPayload = characters.map((character) => {
-    const stats = character;
-    const name = typeof stats.name === "string" ? stats.name : "Character";
-    const bgColor = normalizeHexColor(stats.bg);
-    const isNestedStats = stats && typeof stats === "object" && typeof stats.stats === "object" && stats.stats !== null;
-    const templateStats = isNestedStats ? { ...stats, ...stats.stats } : { ...stats };
-    if (isNestedStats) {
-      delete templateStats.stats;
-    }
-    const normalizedCycleStage = typeof templateStats.cycle_stage === "string" ? templateStats.cycle_stage.toLowerCase() : templateStats.cycle_stage;
-    const normalizedSex = typeof templateStats.sex === "string" ? templateStats.sex.toLowerCase() : templateStats.sex;
-    const resolvedStats = {
-      ...templateStats,
-      sex: normalizedSex,
-      cycle_stage: normalizedCycleStage,
-      ...statChanges[name] || {},
-      internal_thought: stats.internal_thought || stats.thought || "No thought recorded.",
-      relationshipStatus: stats.relationshipStatus || "Unknown Status",
-      desireStatus: stats.desireStatus || "Unknown Desire",
-      inactive: Boolean(stats.inactive),
-      inactiveReason: Number(stats.inactiveReason || 0)
-    };
-    return {
-      name,
-      characterName: name,
-      currentDate,
-      currentTime,
-      stats: resolvedStats,
-      breastGeometry: computeBreastGeometry(resolvedStats),
-      bgColor,
-      darkerBgColor: darkenColor(bgColor),
-      reactionEmoji: getReactionEmoji(stats.last_react),
-      healthIcon: Number(stats.health) === 1 ? "\uD83E\uDD15" : Number(stats.health) === 2 ? "\uD83D\uDC80" : null,
-      showThoughtBubble: true
-    };
-  });
-  if (tabbed || trackerLevel) {
-    return {
-      renderMode: trackerLevel ? "tracker" : "tabbed",
-      input: {
-        characters: characterPayload,
-        worldData,
-        currentDate,
-        currentTime
-      },
-      fallbackRaw: JSON.stringify(data, null, 2)
-    };
-  }
-  return {
-    renderMode: "single",
-    input: {
-      characters: characterPayload,
-      worldData,
-      currentDate,
-      currentTime
-    },
-    fallbackRaw: JSON.stringify(data, null, 2)
-  };
-}
 function applyThemeClass(preset) {
   const panel = byId("sst-lumi-panel");
   if (!panel)
@@ -19740,34 +19775,6 @@ function renderTracker(data, raw, preset, previousData, injectSanitized) {
     return;
   }
   injectSanitized(markup.html);
-}
-function buildTrackerMarkup(data, preset, previousData) {
-  const compiled = compileTemplate(preset);
-  if (!compiled) {
-    return { html: null, fallbackRaw: rawJson(data) };
-  }
-  const prep = buildTemplateData(data, preset, previousData);
-  try {
-    let cardsHtml = "";
-    if (prep.renderMode !== "single") {
-      const transformed = executeTemplateLogic(prep.input, prep.renderMode, preset);
-      cardsHtml = compiled(transformed);
-    } else {
-      const inputChars = prep.input.characters || [];
-      cardsHtml = inputChars.map((item) => compiled(executeTemplateLogic(item, "single", preset))).join("");
-    }
-    const wrapped = `<div id="silly-sim-tracker-container" style="width:100%;">${cardsHtml}</div>`;
-    return { html: wrapped, fallbackRaw: prep.fallbackRaw };
-  } catch {
-    return { html: null, fallbackRaw: prep.fallbackRaw };
-  }
-}
-function rawJson(data) {
-  try {
-    return JSON.stringify(data, null, 2);
-  } catch {
-    return "{}";
-  }
 }
 function showCommandResult(payload) {
   const panel = byId("sst-lumi-command");
