@@ -2042,7 +2042,7 @@ function stripStructuralHTML(text: string): string {
 const SECONDARY_LLM_MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
 
 function describeMissingModelGuidance(): string {
-  return "Secondary LLM model is not configured. Open SimTracker settings → Secondary LLM and enter a real model id (e.g. `gpt-4o-mini`, `claude-haiku-4-5`, `deepseek-chat`). The provider rejected the request because the model field was empty or a placeholder.";
+  return "The selected connection has no usable default model. Choose a model in SimTracker settings → Secondary LLM, or select a connection with a configured model.";
 }
 
 function describeRejectedModelGuidance(model: string): string {
@@ -2096,7 +2096,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
   // Model id for the provider call, validated after the TypeSafe fast lane
   // (which never reaches the provider). Declared here so the catch block
   // below can reference it in rejection guidance.
-  const trimmedModel = (config.secondaryLLMModel || "").trim();
+  let trimmedModel = (config.secondaryLLMModel || "").trim();
 
   spindle.sendToFrontend(
     { type: "secondary_generation_started", chatId, messageId: targetMessageId },
@@ -2236,6 +2236,13 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
         activeUserId || undefined,
       );
       return;
+    }
+    if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
+      const connections = await spindle.connections.list(activeUserId || undefined);
+      const connection = config.secondaryLLMConnectionId
+        ? connections.find((item) => item.id === config.secondaryLLMConnectionId)
+        : connections.find((item) => item.is_default);
+      trimmedModel = typeof connection?.model === "string" ? connection.model.trim() : "";
     }
     if (SECONDARY_LLM_MODEL_PLACEHOLDERS.has(trimmedModel.toLowerCase())) {
       const guidance = describeMissingModelGuidance();

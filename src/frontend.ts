@@ -2817,8 +2817,10 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const llmConnectionSelect = byId<HTMLSelectElement>("sst-lumi-llm-connection");
   llmConnectionSelect?.addEventListener("change", () => {
+    config = { ...config, secondaryLLMConnectionId: llmConnectionSelect.value, secondaryLLMModel: "" };
     ensureModelCombobox()?.update({
       connection: buildConnectionRef(llmConnectionSelect.value),
+      value: "",
     });
   });
 
