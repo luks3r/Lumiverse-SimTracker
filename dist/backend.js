@@ -14066,6 +14066,82 @@ function buildImportedPreset(parsed, timestamp2) {
   };
 }
 
+// src/importService.ts
+function createImportService(deps) {
+  return async function handleImportPresetFile(payload, userId) {
+    const text = typeof payload.text === "string" ? payload.text : "";
+    const fileName = typeof payload.fileName === "string" ? payload.fileName : "import.json";
+    if (!text.trim()) {
+      deps.sendToFrontend({
+        type: "import_result",
+        ok: false,
+        message: "Import failed (empty file)."
+      }, userId);
+      return;
+    }
+    if (deps.hasEphemeralPermission()) {
+      try {
+        const encoded = new TextEncoder().encode(text);
+        const reservation = await deps.requestBlock(encoded.byteLength, {
+          ttlMs: 2 * 60 * 1000,
+          reason: "sst import staging"
+        });
+        const path = `imports/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        await deps.writeEphemeral(path, text, {
+          ttlMs: 2 * 60 * 1000,
+          reservationId: reservation.reservationId
+        });
+        await deps.releaseBlock(reservation.reservationId);
+      } catch {}
+    }
+    let parsed;
+    try {
+      const json = JSON.parse(text);
+      if (!json || typeof json !== "object")
+        throw new Error("invalid");
+      parsed = json;
+    } catch {
+      deps.sendToFrontend({
+        type: "import_result",
+        ok: false,
+        message: "Import failed (invalid JSON)."
+      }, userId);
+      await deps.trackEvent("sst.import.failed", { reason: "invalid_json", fileName }, { level: "warn" });
+      return;
+    }
+    if (isInlinePackOnly(parsed)) {
+      const config2 = deps.readConfig();
+      deps.writeConfig({ ...config2, inlinePacks: [...config2.inlinePacks, parsed] });
+      await deps.saveConfig(userId);
+      deps.pushMacroValues();
+      await deps.sendConfigState(userId);
+      deps.sendToFrontend({
+        type: "import_result",
+        ok: true,
+        message: `Imported inline pack: ${String(parsed.templateName || "Unnamed")}`
+      }, userId);
+      await deps.trackEvent("sst.import.inline_pack", { fileName }, { level: "info" });
+      return;
+    }
+    const preset = buildImportedPreset(parsed, Date.now());
+    const config = deps.readConfig();
+    deps.writeConfig({
+      ...config,
+      userPresets: [...config.userPresets, preset],
+      templateId: preset.id
+    });
+    await deps.saveConfig(userId);
+    deps.pushMacroValues();
+    await deps.sendConfigState(userId);
+    deps.sendToFrontend({
+      type: "import_result",
+      ok: true,
+      message: `Imported preset: ${preset.templateName}`
+    }, userId);
+    await deps.trackEvent("sst.import.preset", { fileName, templateId: preset.id }, { level: "info" });
+  };
+}
+
 // src/secondaryPromptText.ts
 function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
   if (!base)
@@ -14204,6 +14280,251 @@ function resolveSecondaryConnection(connections, selectedConnectionId, configure
     return { ok: false, reason: "model", model };
   }
   return { ok: true, connection, provider, model };
+}
+
+// src/commandEngine.ts
+function createCommandEngine(deps) {
+  function formatTrackerPayload2(data, format, identifier) {
+    return formatTrackerPayload(data, format, identifier, deps.readConfig().trackerTagName);
+  }
+  function makeStarterTrackerBlock() {
+    const config = deps.readConfig();
+    return formatTrackerPayload2(buildTemplateExampleData(deps.getActivePreset()), config.trackerFormat, config.codeBlockIdentifier);
+  }
+  function replaceTrackerBlock2(content, identifier, replacementBlock) {
+    return replaceTrackerBlock(content, identifier, replacementBlock, deps.readConfig().trackerTagName);
+  }
+  function buildCommandResponse(payload) {
+    return { type: "command_result", payload };
+  }
+  async function mutateChatForCommand(command, arg1, ctx) {
+    if (!deps.hasChatMutationPermission() || !ctx.chatId)
+      return null;
+    let messages = [];
+    try {
+      messages = await deps.getMessages(ctx.chatId);
+    } catch {
+      return null;
+    }
+    let latestTrackerMessage = null;
+    for (let i = messages.length - 1;i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (deps.extractTrackerPayloadFromMessage(msg.content)) {
+        latestTrackerMessage = msg;
+        break;
+      }
+    }
+    if (command === "/sst-add") {
+      const target = messages.findLast((msg) => msg.role === "assistant") || null;
+      if (!target) {
+        return {
+          command: "sst-add",
+          ok: false,
+          message: "No assistant message found to append tracker tag.",
+          mode: "chat_mutation"
+        };
+      }
+      if (deps.extractTrackerPayloadFromMessage(target.content)) {
+        return {
+          command: "sst-add",
+          ok: false,
+          message: "Latest assistant message already contains a tracker tag.",
+          mode: "chat_mutation"
+        };
+      }
+      const block = makeStarterTrackerBlock();
+      const updatedContent2 = `${target.content.trimEnd()}
+
+${block}`;
+      await deps.updateMessage(ctx.chatId, target.id, { content: updatedContent2 });
+      await deps.trackEvent("sst.command.add", { mode: "chat_mutation" }, { chatId: ctx.chatId });
+      return {
+        command: "sst-add",
+        ok: true,
+        message: "Added starter tracker tag to latest assistant message.",
+        block,
+        mode: "chat_mutation"
+      };
+    }
+    if (!latestTrackerMessage) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "No tracker tag found in current chat.",
+        mode: "chat_mutation"
+      };
+    }
+    const raw = deps.extractTrackerPayloadFromMessage(latestTrackerMessage.content);
+    if (!raw) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "Latest tracker tag could not be read.",
+        mode: "chat_mutation"
+      };
+    }
+    const parsed = parseTrackerPayload(raw);
+    if (!parsed) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "Latest tracker tag is invalid and cannot be rewritten.",
+        mode: "chat_mutation"
+      };
+    }
+    const targetFormat = command === "/sst-convert" ? arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat : deps.readConfig().trackerFormat;
+    const replacement = formatTrackerPayload2(parsed, targetFormat, deps.readConfig().codeBlockIdentifier);
+    const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, deps.readConfig().codeBlockIdentifier, replacement);
+    await deps.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
+    deps.writeLastSimStats(targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2));
+    deps.pushMacroValues();
+    await deps.trackEvent(command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen", { mode: "chat_mutation", format: targetFormat }, { chatId: ctx.chatId });
+    return {
+      command: command.replace("/", ""),
+      ok: true,
+      message: command === "/sst-convert" ? `Converted latest tracker to ${targetFormat.toUpperCase()} and updated chat message.` : "Rebuilt latest tracker tag in preferred format and updated chat message.",
+      block: replacement,
+      mode: "chat_mutation"
+    };
+  }
+  async function handleSlashCommand(content, ctx) {
+    const trimmed = content.trim();
+    if (!trimmed.startsWith("/sst-"))
+      return null;
+    const [commandRaw, arg1] = trimmed.split(/\s+/);
+    const command = commandRaw;
+    if (!["/sst-add", "/sst-convert", "/sst-regen"].includes(command)) {
+      return buildCommandResponse({
+        command: commandRaw.replace("/", ""),
+        ok: false,
+        message: "Unknown SST command. Supported: /sst-add, /sst-convert, /sst-regen",
+        mode: "fallback"
+      });
+    }
+    const chatResult = await mutateChatForCommand(command, arg1, ctx);
+    if (chatResult) {
+      return buildCommandResponse(chatResult);
+    }
+    if (command === "/sst-convert") {
+      const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat;
+      if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+        return buildCommandResponse({
+          command: "sst-convert",
+          ok: false,
+          message: "No tracker tag found yet.",
+          mode: "fallback"
+        });
+      }
+      const parsed2 = parseTrackerPayload(deps.readLastSimStats());
+      if (!parsed2) {
+        return buildCommandResponse({
+          command: "sst-convert",
+          ok: false,
+          message: "Latest tracker tag is invalid and cannot be converted.",
+          mode: "fallback"
+        });
+      }
+      const block2 = formatTrackerPayload2(parsed2, target, deps.readConfig().codeBlockIdentifier);
+      deps.writeLastSimStats(target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2));
+      deps.pushMacroValues();
+      await deps.trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      return buildCommandResponse({
+        command: "sst-convert",
+        ok: true,
+        message: `Converted latest tracker to ${target.toUpperCase()}.`,
+        block: block2,
+        mode: "fallback"
+      });
+    }
+    if (command === "/sst-add") {
+      const block2 = makeStarterTrackerBlock();
+      await deps.trackEvent("sst.command.add", { mode: "fallback" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      return buildCommandResponse({
+        command: "sst-add",
+        ok: true,
+        message: "Generated a starter tracker tag.",
+        block: block2,
+        mode: "fallback"
+      });
+    }
+    if (!deps.readLastSimStats() || deps.readLastSimStats() === "{}") {
+      return buildCommandResponse({
+        command: "sst-regen",
+        ok: false,
+        message: "No tracker tag to regenerate yet. Use /sst-add first.",
+        mode: "fallback"
+      });
+    }
+    const parsed = parseTrackerPayload(deps.readLastSimStats());
+    if (!parsed) {
+      return buildCommandResponse({
+        command: "sst-regen",
+        ok: false,
+        message: "Latest tracker is invalid and cannot be regenerated.",
+        mode: "fallback"
+      });
+    }
+    const block = formatTrackerPayload2(parsed, deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+    await deps.trackEvent("sst.command.regen", { mode: "fallback", format: deps.readConfig().trackerFormat }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+    return buildCommandResponse({
+      command: "sst-regen",
+      ok: true,
+      message: "Rebuilt latest tracker tag in preferred format.",
+      block,
+      mode: "fallback"
+    });
+  }
+  return { handleSlashCommand };
+}
+
+// src/settingsStore.ts
+var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
+var CONFIG_PATH = "preferences.json";
+function createSettingsStore(deps) {
+  async function loadTypeSafeApiKey(userId) {
+    try {
+      return await deps.enclaveGet(TYPE_SAFE_ENCLAVE_KEY, userId) ?? "";
+    } catch (err) {
+      deps.logWarn(`Enclave unavailable; TypeSafe key not loaded: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return "";
+  }
+  async function loadConfig(userId, onNormalized) {
+    if (!userId)
+      throw new Error("A user id is required to load SimTracker settings.");
+    try {
+      const parsed = await deps.getJson(CONFIG_PATH, {
+        fallback: { ...DEFAULT_CONFIG },
+        userId
+      });
+      const config = normalizeStoredConfig(parsed);
+      onNormalized(config);
+      config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
+      return config;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.logError(`Failed to load SimTracker settings for user ${userId}: ${message}`);
+      throw new Error(`Unable to load saved settings: ${message}`);
+    }
+  }
+  async function saveConfig(userId, configToSave) {
+    if (!userId)
+      throw new Error("A user id is required to save SimTracker settings.");
+    await deps.setJson(CONFIG_PATH, { ...configToSave, typeSafeApiKey: "" }, { indent: 2, userId });
+  }
+  async function syncTypeSafeKeyToEnclave(userId, nextKey, previousKey) {
+    const next = nextKey.trim();
+    try {
+      if (next && next !== previousKey) {
+        await deps.enclavePut(TYPE_SAFE_ENCLAVE_KEY, next, userId);
+      } else if (!next && previousKey) {
+        await deps.enclaveDelete(TYPE_SAFE_ENCLAVE_KEY, userId);
+      }
+    } catch (err) {
+      deps.logWarn(`Failed to persist the TypeSafe key to the enclave: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { loadConfig, saveConfig, syncTypeSafeKeyToEnclave };
 }
 
 // src/backendMessageContext.ts
@@ -14617,8 +14938,6 @@ function interpretConceptionAnswers(answers, candidates, fireThreshold = CONCEPT
 // src/backend.ts
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
-var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
-var CONFIG_PATH = "preferences.json";
 var config = { ...DEFAULT_CONFIG };
 var lastSimStats = "{}";
 var activeUserId = null;
@@ -14651,6 +14970,44 @@ var { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChat
   normalizeLegacyTrackersInChat,
   extractTrackerPayloadFromMessage,
   readRetainCount: () => config.retainTrackerCount
+});
+var { handleSlashCommand } = createCommandEngine({
+  readConfig: () => config,
+  readLastSimStats: () => lastSimStats,
+  writeLastSimStats: (value) => {
+    lastSimStats = value;
+  },
+  getActivePreset,
+  extractTrackerPayloadFromMessage,
+  hasChatMutationPermission: () => hasPermission("chat_mutation"),
+  getMessages: (chatId) => spindle.chat.getMessages(chatId),
+  updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
+  pushMacroValues,
+  trackEvent
+});
+var handleImportPresetFile = createImportService({
+  hasEphemeralPermission: () => hasPermission("ephemeral_storage"),
+  requestBlock: (bytes, options) => spindle.ephemeral.requestBlock(bytes, options),
+  writeEphemeral: (path, text, options) => spindle.ephemeral.write(path, text, options),
+  releaseBlock: (reservationId) => spindle.ephemeral.releaseBlock(reservationId),
+  sendToFrontend: (message, userId) => spindle.sendToFrontend(message, userId),
+  readConfig: () => config,
+  writeConfig: (value) => {
+    config = value;
+  },
+  saveConfig: (userId) => saveConfig(userId),
+  pushMacroValues,
+  sendConfigState: (userId) => sendConfigState(userId),
+  trackEvent
+});
+var settingsStore = createSettingsStore({
+  getJson: (path, options) => spindle.userStorage.getJson(path, options),
+  setJson: (path, value, options) => spindle.userStorage.setJson(path, value, options),
+  enclaveGet: (key, userId) => spindle.enclave.get(key, userId),
+  enclavePut: (key, value, userId) => spindle.enclave.put(key, value, userId),
+  enclaveDelete: (key, userId) => spindle.enclave.delete(key, userId),
+  logError: (message) => spindle.log.error(message),
+  logWarn: (message) => spindle.log.warn(message)
 });
 function hasPermission(name) {
   return runtime.grantedPermissions.has(name);
@@ -14736,210 +15093,10 @@ function buildExampleTrackerBlock(format, identifier) {
 function formatTrackerPayload2(data, format, identifier) {
   return formatTrackerPayload(data, format, identifier, config.trackerTagName);
 }
-function buildCommandResponse(payload) {
-  return {
-    type: "command_result",
-    payload
-  };
-}
-function makeStarterTrackerBlock() {
-  return buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-}
-function replaceTrackerBlock2(content, identifier, replacementBlock) {
-  return replaceTrackerBlock(content, identifier, replacementBlock, config.trackerTagName);
-}
-async function mutateChatForCommand(command, arg1, ctx) {
-  if (!hasPermission("chat_mutation") || !ctx.chatId)
-    return null;
-  let messages = [];
-  try {
-    messages = await spindle.chat.getMessages(ctx.chatId);
-  } catch {
-    return null;
-  }
-  let latestTrackerMessage = null;
-  for (let i = messages.length - 1;i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (extractTrackerPayloadFromMessage(msg.content)) {
-      latestTrackerMessage = msg;
-      break;
-    }
-  }
-  if (command === "/sst-add") {
-    const target = messages.findLast((msg) => msg.role === "assistant") || null;
-    if (!target) {
-      return {
-        command: "sst-add",
-        ok: false,
-        message: "No assistant message found to append tracker tag.",
-        mode: "chat_mutation"
-      };
-    }
-    if (extractTrackerPayloadFromMessage(target.content)) {
-      return {
-        command: "sst-add",
-        ok: false,
-        message: "Latest assistant message already contains a tracker tag.",
-        mode: "chat_mutation"
-      };
-    }
-    const block = makeStarterTrackerBlock();
-    const updatedContent2 = `${target.content.trimEnd()}
-
-${block}`;
-    await spindle.chat.updateMessage(ctx.chatId, target.id, { content: updatedContent2 });
-    await trackEvent("sst.command.add", { mode: "chat_mutation" }, { chatId: ctx.chatId });
-    return {
-      command: "sst-add",
-      ok: true,
-      message: "Added starter tracker tag to latest assistant message.",
-      block,
-      mode: "chat_mutation"
-    };
-  }
-  if (!latestTrackerMessage) {
-    return {
-      command: command.replace("/", ""),
-      ok: false,
-      message: "No tracker tag found in current chat.",
-      mode: "chat_mutation"
-    };
-  }
-  const raw = extractTrackerPayloadFromMessage(latestTrackerMessage.content);
-  if (!raw) {
-    return {
-      command: command.replace("/", ""),
-      ok: false,
-      message: "Latest tracker tag could not be read.",
-      mode: "chat_mutation"
-    };
-  }
-  const parsed = parseTrackerPayload(raw);
-  if (!parsed) {
-    return {
-      command: command.replace("/", ""),
-      ok: false,
-      message: "Latest tracker tag is invalid and cannot be rewritten.",
-      mode: "chat_mutation"
-    };
-  }
-  const targetFormat = command === "/sst-convert" ? arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : config.trackerFormat : config.trackerFormat;
-  const replacement = formatTrackerPayload2(parsed, targetFormat, config.codeBlockIdentifier);
-  const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, config.codeBlockIdentifier, replacement);
-  await spindle.chat.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
-  lastSimStats = targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
-  pushMacroValues();
-  await trackEvent(command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen", { mode: "chat_mutation", format: targetFormat }, { chatId: ctx.chatId });
-  return {
-    command: command.replace("/", ""),
-    ok: true,
-    message: command === "/sst-convert" ? `Converted latest tracker to ${targetFormat.toUpperCase()} and updated chat message.` : "Rebuilt latest tracker tag in preferred format and updated chat message.",
-    block: replacement,
-    mode: "chat_mutation"
-  };
-}
-async function handleSlashCommand(content, ctx) {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("/sst-"))
-    return null;
-  const [commandRaw, arg1] = trimmed.split(/\s+/);
-  const command = commandRaw;
-  if (!["/sst-add", "/sst-convert", "/sst-regen"].includes(command)) {
-    return buildCommandResponse({
-      command: commandRaw.replace("/", ""),
-      ok: false,
-      message: "Unknown SST command. Supported: /sst-add, /sst-convert, /sst-regen",
-      mode: "fallback"
-    });
-  }
-  const chatResult = await mutateChatForCommand(command, arg1, ctx);
-  if (chatResult) {
-    return buildCommandResponse(chatResult);
-  }
-  if (command === "/sst-convert") {
-    const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : config.trackerFormat;
-    if (!lastSimStats || lastSimStats === "{}") {
-      return buildCommandResponse({
-        command: "sst-convert",
-        ok: false,
-        message: "No tracker tag found yet.",
-        mode: "fallback"
-      });
-    }
-    const parsed2 = parseTrackerPayload(lastSimStats);
-    if (!parsed2) {
-      return buildCommandResponse({
-        command: "sst-convert",
-        ok: false,
-        message: "Latest tracker tag is invalid and cannot be converted.",
-        mode: "fallback"
-      });
-    }
-    const block2 = formatTrackerPayload2(parsed2, target, config.codeBlockIdentifier);
-    lastSimStats = target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2);
-    pushMacroValues();
-    await trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-    return buildCommandResponse({
-      command: "sst-convert",
-      ok: true,
-      message: `Converted latest tracker to ${target.toUpperCase()}.`,
-      block: block2,
-      mode: "fallback"
-    });
-  }
-  if (command === "/sst-add") {
-    const block2 = makeStarterTrackerBlock();
-    await trackEvent("sst.command.add", { mode: "fallback" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-    return buildCommandResponse({
-      command: "sst-add",
-      ok: true,
-      message: "Generated a starter tracker tag.",
-      block: block2,
-      mode: "fallback"
-    });
-  }
-  if (!lastSimStats || lastSimStats === "{}") {
-    return buildCommandResponse({
-      command: "sst-regen",
-      ok: false,
-      message: "No tracker tag to regenerate yet. Use /sst-add first.",
-      mode: "fallback"
-    });
-  }
-  const parsed = parseTrackerPayload(lastSimStats);
-  if (!parsed) {
-    return buildCommandResponse({
-      command: "sst-regen",
-      ok: false,
-      message: "Latest tracker is invalid and cannot be regenerated.",
-      mode: "fallback"
-    });
-  }
-  const block = formatTrackerPayload2(parsed, config.trackerFormat, config.codeBlockIdentifier);
-  await trackEvent("sst.command.regen", { mode: "fallback", format: config.trackerFormat }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-  return buildCommandResponse({
-    command: "sst-regen",
-    ok: true,
-    message: "Rebuilt latest tracker tag in preferred format.",
-    block,
-    mode: "fallback"
-  });
-}
 async function loadConfig(userId) {
-  if (!userId)
-    throw new Error("A user id is required to load SimTracker settings.");
-  try {
-    const parsed = await spindle.userStorage.getJson(CONFIG_PATH, {
-      fallback: { ...DEFAULT_CONFIG },
-      userId
-    });
-    config = normalizeStoredConfig(parsed);
-    config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    spindle.log.error(`Failed to load SimTracker settings for user ${userId}: ${message}`);
-    throw new Error(`Unable to load saved settings: ${message}`);
-  }
+  config = await settingsStore.loadConfig(userId, (normalized) => {
+    config = normalized;
+  });
   loadedConfigUserId = userId;
   pushMacroValues();
 }
@@ -14963,29 +15120,10 @@ async function loadSeededTemplatePresets() {
   runtime.seededPresetsLoaded = true;
 }
 async function saveConfig(userId, configToSave = config) {
-  if (!userId)
-    throw new Error("A user id is required to save SimTracker settings.");
-  await spindle.userStorage.setJson(CONFIG_PATH, { ...configToSave, typeSafeApiKey: "" }, { indent: 2, userId });
-}
-async function loadTypeSafeApiKey(userId) {
-  try {
-    return await spindle.enclave.get(TYPE_SAFE_ENCLAVE_KEY, userId) ?? "";
-  } catch (err) {
-    spindle.log.warn(`Enclave unavailable; TypeSafe key not loaded: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return "";
+  await settingsStore.saveConfig(userId, configToSave);
 }
 async function syncTypeSafeKeyToEnclave(userId, nextKey, previousKey) {
-  const next = nextKey.trim();
-  try {
-    if (next && next !== previousKey) {
-      await spindle.enclave.put(TYPE_SAFE_ENCLAVE_KEY, next, userId);
-    } else if (!next && previousKey) {
-      await spindle.enclave.delete(TYPE_SAFE_ENCLAVE_KEY, userId);
-    }
-  } catch (err) {
-    spindle.log.warn(`Failed to persist the TypeSafe key to the enclave: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  await settingsStore.syncTypeSafeKeyToEnclave(userId, nextKey, previousKey);
 }
 spindle.on("MESSAGE_SENT", (payload, userId) => {
   (async () => {
@@ -15634,76 +15772,6 @@ function sendTagInterceptorConfig(userId, configToSend = config) {
     tagType: configToSend.codeBlockIdentifier,
     removeFromMessage: configToSend.hideSimBlocks
   }, userId);
-}
-async function handleImportPresetFile(payload, userId) {
-  const text = typeof payload.text === "string" ? payload.text : "";
-  const fileName = typeof payload.fileName === "string" ? payload.fileName : "import.json";
-  if (!text.trim()) {
-    spindle.sendToFrontend({
-      type: "import_result",
-      ok: false,
-      message: "Import failed (empty file)."
-    }, userId);
-    return;
-  }
-  if (hasPermission("ephemeral_storage")) {
-    try {
-      const encoded = new TextEncoder().encode(text);
-      const reservation = await spindle.ephemeral.requestBlock(encoded.byteLength, {
-        ttlMs: 2 * 60 * 1000,
-        reason: "sst import staging"
-      });
-      const path = `imports/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      await spindle.ephemeral.write(path, text, {
-        ttlMs: 2 * 60 * 1000,
-        reservationId: reservation.reservationId
-      });
-      await spindle.ephemeral.releaseBlock(reservation.reservationId);
-    } catch {}
-  }
-  let parsed;
-  try {
-    const json = JSON.parse(text);
-    if (!json || typeof json !== "object")
-      throw new Error("invalid");
-    parsed = json;
-  } catch {
-    spindle.sendToFrontend({
-      type: "import_result",
-      ok: false,
-      message: "Import failed (invalid JSON)."
-    }, userId);
-    await trackEvent("sst.import.failed", { reason: "invalid_json", fileName }, { level: "warn" });
-    return;
-  }
-  if (isInlinePackOnly(parsed)) {
-    config = { ...config, inlinePacks: [...config.inlinePacks, parsed] };
-    await saveConfig(userId);
-    pushMacroValues();
-    await sendConfigState(userId);
-    spindle.sendToFrontend({
-      type: "import_result",
-      ok: true,
-      message: `Imported inline pack: ${String(parsed.templateName || "Unnamed")}`
-    }, userId);
-    await trackEvent("sst.import.inline_pack", { fileName }, { level: "info" });
-    return;
-  }
-  const preset = buildImportedPreset(parsed, Date.now());
-  config = {
-    ...config,
-    userPresets: [...config.userPresets, preset],
-    templateId: preset.id
-  };
-  await saveConfig(userId);
-  pushMacroValues();
-  await sendConfigState(userId);
-  spindle.sendToFrontend({
-    type: "import_result",
-    ok: true,
-    message: `Imported preset: ${preset.templateName}`
-  }, userId);
-  await trackEvent("sst.import.preset", { fileName, templateId: preset.id }, { level: "info" });
 }
 spindle.onFrontendMessage(async (payload, userId) => {
   if (!payload || typeof payload !== "object")

@@ -11,6 +11,8 @@ let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | nul
 let interceptor: ((messages: Array<Record<string, unknown>>, context: unknown) => Promise<Array<Record<string, unknown>>>) | null = null;
 let permissionChanged: ((payload: { permission: string; granted: boolean; allGranted: string[] }) => void) | null = null;
 let storedConfig: FrontendMessage = {};
+let enclaveKey = "";
+const enclaveWrites: string[] = [];
 
 const spindle = {
   frontendCapabilities: { declare: () => () => {} },
@@ -32,7 +34,11 @@ const spindle = {
     setJson: async (_path: string, value: FrontendMessage) => { saved.push(value); storedConfig = value; },
   },
   storage: { exists: async () => false },
-  enclave: { get: async () => "", put: async () => {}, delete: async () => {} },
+  enclave: {
+    get: async () => enclaveKey,
+    put: async (_name: string, value: string) => { enclaveKey = value; enclaveWrites.push(`put:${value}`); },
+    delete: async () => { enclaveKey = ""; enclaveWrites.push("delete"); },
+  },
   connections: { list: async () => [] },
   chat: {
     getMessages: async (chatId: string) => chats.get(chatId) ?? [],
@@ -89,6 +95,7 @@ describe("backend host flows", () => {
 
   test("settings load and save preserve normalized values without storing TypeSafe key", async () => {
     storedConfig = {};
+    enclaveKey = "";
     const initial = await sendFrontend({ type: "get_config" });
     expect(initial.find((message) => message.type === "tag_interceptor_config")).toMatchObject({ tagName: "tracker", tagType: "sim" });
     const updated = await sendFrontend({ type: "set_config", config: {
@@ -103,6 +110,18 @@ describe("backend host flows", () => {
     expect(config.secondaryLLMModel).toBe("");
     expect(saved.at(-1)?.typeSafeApiKey).toBe("");
     expect(updated.some((message) => message.type === "config_saved")).toBe(true);
+  });
+
+  test("TypeSafe key loads from the enclave and clearing it leaves no plaintext copy", async () => {
+    storedConfig = {};
+    enclaveKey = "existing-key";
+    const loaded = await sendFrontend({ type: "get_config" });
+    expect((loaded.find((message) => message.type === "config")?.config as FrontendMessage).typeSafeApiKey).toBe("existing-key");
+    enclaveWrites.length = 0;
+    const cleared = await sendFrontend({ type: "set_config", config: { typeSafeApiKey: "" } });
+    expect(cleared.some((message) => message.type === "config_saved")).toBe(true);
+    expect(enclaveWrites).toEqual(["delete"]);
+    expect(saved.at(-1)?.typeSafeApiKey).toBe("");
   });
 
   test("preset import reports invalid JSON and adds a valid preset", async () => {
@@ -133,6 +152,15 @@ describe("backend host flows", () => {
     const config = imported.find((message) => message.type === "config")?.config as FrontendMessage;
     expect(config.inlinePacks).toMatchObject([{ templateName: "Inline Only" }]);
     expect(config.userPresets).toEqual([]);
+  });
+
+  test("empty import reports an error without changing saved settings", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const savedBefore = saved.length;
+    const result = await sendFrontend({ type: "import_preset_file", fileName: "empty.json", text: "   " });
+    expect(result.find((message) => message.type === "import_result")).toMatchObject({ ok: false, message: "Import failed (empty file)." });
+    expect(saved.length).toBe(savedBefore);
   });
 
   test("slash command converts latest tracker in chat", async () => {
@@ -182,6 +210,33 @@ describe("backend host flows", () => {
     expect(result.payload).toMatchObject({ command: "sst-regen", ok: true, mode: "chat_mutation" });
     expect(chats.get(chatId)?.[0].content).toContain("characters:\n  - name: Bob");
     expect(chats.get(chatId)?.[0].content).toContain("hp: 7");
+  });
+
+  test("slash add falls back to a generated block when chat mutation is unavailable", async () => {
+    await sendFrontend({ type: "get_config" });
+    permissionChanged?.({ permission: "chat_mutation", granted: false, allGranted: ["generation"] });
+    const chatId = "command-fallback-chat";
+    chats.set(chatId, [{ id: "user-1", role: "user", content: "/sst-add" }]);
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId, messageId: "user-1", content: "/sst-add" }, "flow-user");
+    const result = await waitForNotification("command_result");
+    expect(result.payload).toMatchObject({ command: "sst-add", ok: true, mode: "fallback" });
+    expect((result.payload as FrontendMessage).block).toContain('<tracker type="sim">');
+    expect(chats.get(chatId)?.[0].content).toBe("/sst-add");
+    permissionChanged?.({ permission: "chat_mutation", granted: true, allGranted: ["generation", "chat_mutation"] });
+  });
+
+  test("unknown slash command returns the established guidance", async () => {
+    await sendFrontend({ type: "get_config" });
+    const chatId = "command-unknown-chat";
+    chats.set(chatId, [{ id: "user-1", role: "user", content: "/sst-unknown" }]);
+    notifications.length = 0;
+    handlers.get("MESSAGE_SENT")?.({ chatId, messageId: "user-1", content: "/sst-unknown" }, "flow-user");
+    const result = await waitForNotification("command_result");
+    expect(result.payload).toMatchObject({
+      command: "sst-unknown", ok: false, mode: "fallback",
+      message: "Unknown SST command. Supported: /sst-add, /sst-convert, /sst-regen",
+    });
   });
 
   test("latest tracker lookup rehydrates ordered history from chat messages", async () => {
