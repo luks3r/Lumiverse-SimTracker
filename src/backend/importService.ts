@@ -1,4 +1,4 @@
-import type { TrackerConfig } from "./trackerConfig";
+import type { TrackerConfig } from "../shared/trackerConfig";
 import { buildImportedPreset, isInlinePackOnly } from "./importedPreset";
 
 export function createImportService(deps: {

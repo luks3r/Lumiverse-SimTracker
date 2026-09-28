@@ -1,7 +1,7 @@
 import { stringify as stringifyYaml } from "yaml";
 import type { MessageContext } from "./backendMessageContext";
-import type { TemplatePreset } from "./templatePresets";
-import type { TrackerConfig } from "./trackerConfig";
+import type { TemplatePreset } from "../shared/templatePresets";
+import type { TrackerConfig } from "../shared/trackerConfig";
 import { buildTemplateExampleData, formatTrackerPayload as formatPayloadWithTag, replaceTrackerBlock as replaceBlockWithTag } from "./trackerCommandText";
 import { parseTrackerPayload } from "./trackerPayload";
 

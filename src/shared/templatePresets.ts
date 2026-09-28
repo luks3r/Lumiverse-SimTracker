@@ -1,9 +1,9 @@
-import bentoStyleTracker from "../tracker-card-templates/bento-style-tracker.json";
-import datingCardTemplate from "../tracker-card-templates/dating-card-template.json";
-import tacticalHudSidebarTabs from "../tracker-card-templates/tactical-hud-sidebar-tabs.json";
-import rpgSidebarPreset from "../tracker-card-templates/rpg-sidebar-preset.json";
-import pulseThreadTracker from "../tracker-card-templates/pulse-thread-tracker.json";
-import narrativeWeaveSimTracker from "../tracker-card-templates/narrative-weave-simtracker.json";
+import bentoStyleTracker from "../../tracker-card-templates/bento-style-tracker.json";
+import datingCardTemplate from "../../tracker-card-templates/dating-card-template.json";
+import tacticalHudSidebarTabs from "../../tracker-card-templates/tactical-hud-sidebar-tabs.json";
+import rpgSidebarPreset from "../../tracker-card-templates/rpg-sidebar-preset.json";
+import pulseThreadTracker from "../../tracker-card-templates/pulse-thread-tracker.json";
+import narrativeWeaveSimTracker from "../../tracker-card-templates/narrative-weave-simtracker.json";
 
 export type TemplateField = {
   key: string;

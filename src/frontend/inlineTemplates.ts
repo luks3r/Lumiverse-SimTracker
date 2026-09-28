@@ -1,5 +1,5 @@
 import Handlebars from "handlebars";
-import type { TemplatePreset } from "./templatePresets";
+import type { TemplatePreset } from "../shared/templatePresets";
 
 export type InlineProcessorConfig = {
   enableInlineTemplates: boolean;

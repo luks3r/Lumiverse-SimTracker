@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildSavedFrontendConfig } from "../src/frontendSettingsValues";
-import { DEFAULT_CONFIG } from "../src/trackerConfig";
+import { buildSavedFrontendConfig } from "../src/frontend/frontendSettingsValues";
+import { DEFAULT_CONFIG } from "../src/shared/trackerConfig";
 
 describe("frontend settings values", () => {
   test("Save maps form values using the current defaults and limits", () => {

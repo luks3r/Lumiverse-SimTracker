@@ -1,5 +1,5 @@
 import { sanitizeSinglePreset } from "./presetSanitizers";
-import type { TemplatePreset } from "./templatePresets";
+import type { TemplatePreset } from "../shared/templatePresets";
 
 type StorageStat = { exists: boolean; isDirectory: boolean; isFile: boolean };
 

@@ -1,4 +1,4 @@
-import type { TrackerData } from "./trackerData";
+import type { TrackerData } from "../shared/trackerData";
 
 export function normalizeCharacters(data: TrackerData): Array<Record<string, unknown>> {
   if (Array.isArray(data.characters)) return data.characters;

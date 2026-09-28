@@ -1,5 +1,5 @@
-import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "./trackerConfig";
-import { sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "../shared/trackerConfig";
+import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 
 export type FrontendSettingsValues = {
   selectedTemplate?: string;

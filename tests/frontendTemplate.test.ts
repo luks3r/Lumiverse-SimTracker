@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileTemplate, executeTemplateLogic, resolveTrackerMountMode } from "../src/frontendTemplate";
+import { compileTemplate, executeTemplateLogic, resolveTrackerMountMode } from "../src/frontend/frontendTemplate";
 
 describe("frontend template helpers", () => {
   test("resolves mount position from preset before HTML marker", () => {

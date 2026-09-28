@@ -1,5 +1,5 @@
 import { normalizeStoredConfig } from "./backendConfig";
-import { DEFAULT_CONFIG, type TrackerConfig } from "./trackerConfig";
+import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 
 const TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
 const CONFIG_PATH = "preferences.json";

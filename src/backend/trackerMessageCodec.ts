@@ -1,6 +1,6 @@
-import { DEFAULT_CONFIG, type TrackerConfig } from "./trackerConfig";
+import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { parseTrackerPayload } from "./trackerPayload";
-import { extractSimBlock, extractTrackerTag, extractTrackerTagLoose, sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import { extractSimBlock, extractTrackerTag, extractTrackerTagLoose, sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 
 export function createTrackerMessageCodec(readConfig: () => Pick<TrackerConfig, "trackerTagName" | "codeBlockIdentifier">) {
   const config = {

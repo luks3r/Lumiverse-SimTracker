@@ -1,5 +1,5 @@
-import type { TemplatePreset } from "./templatePresets";
-import type { TrackerData } from "./trackerData";
+import type { TemplatePreset } from "../shared/templatePresets";
+import type { TrackerData } from "../shared/trackerData";
 import { calculateStatChanges, normalizeCharacters } from "./trackerViewData";
 import { compileTemplate, executeTemplateLogic } from "./frontendTemplate";
 import { darkenColor, normalizeHexColor } from "./colorUtils";

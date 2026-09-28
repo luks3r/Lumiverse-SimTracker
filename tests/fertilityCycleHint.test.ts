@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildFirstMessageHint, type FertilityCycleBias } from "../src/fertilityCycleHint";
+import { buildFirstMessageHint, type FertilityCycleBias } from "../src/shared/fertilityCycleHint";
 
 describe("first-message fertility hint", () => {
   test("uses each configured cycle window", () => {

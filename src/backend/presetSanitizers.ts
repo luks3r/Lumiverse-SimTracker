@@ -1,4 +1,4 @@
-import { getTemplatePresetById, type TemplatePreset } from "./templatePresets";
+import { getTemplatePresetById, type TemplatePreset } from "../shared/templatePresets";
 
 function upgradeLegacyImportedPreset(preset: TemplatePreset): TemplatePreset {
   const html = preset.htmlTemplate || "";

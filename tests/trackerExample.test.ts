@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { inferExampleValue, setDeep } from "../src/trackerExample";
+import { inferExampleValue, setDeep } from "../src/backend/trackerExample";
 
 describe("tracker example helpers", () => {
   test("writes nested fields and replaces scalar parents", () => {

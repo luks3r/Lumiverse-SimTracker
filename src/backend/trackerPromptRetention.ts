@@ -1,7 +1,7 @@
 import { formatTrackerForPrompt } from "./trackerPayload";
-import { buildTrackerFenceRegex, buildTrackerTagRegex, parseTagAttributes, sanitizeIdentifier } from "./trackerSyntax";
+import { buildTrackerFenceRegex, buildTrackerTagRegex, parseTagAttributes, sanitizeIdentifier } from "../shared/trackerSyntax";
 import type { createTrackerMessageCodec } from "./trackerMessageCodec";
-import type { TrackerConfig } from "./trackerConfig";
+import type { TrackerConfig } from "../shared/trackerConfig";
 
 type TrackerHistoryEntry = { messageId: string; payload: string };
 

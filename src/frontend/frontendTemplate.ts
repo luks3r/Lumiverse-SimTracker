@@ -1,5 +1,5 @@
 import Handlebars from "handlebars";
-import type { TemplatePreset } from "./templatePresets";
+import type { TemplatePreset } from "../shared/templatePresets";
 
 export type TrackerMountMode = "message_top" | "message_bottom" | "side_left" | "side_right";
 

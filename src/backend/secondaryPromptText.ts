@@ -1,4 +1,4 @@
-import { escapeRegex, sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import { escapeRegex, sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 
 /** Convert old code-fence examples to the tracker tag used on the wire. */
 export function sanitizeSysPromptForWireFormat(base: string, tagName: string, identifier: string): string {

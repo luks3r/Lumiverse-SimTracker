@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildTrackerMarkup } from "../src/frontendTemplateRenderer";
+import { buildTrackerMarkup } from "../src/frontend/frontendTemplateRenderer";
 
 describe("frontend template rendering", () => {
   test("renders per-character cards with prior numeric changes", () => {

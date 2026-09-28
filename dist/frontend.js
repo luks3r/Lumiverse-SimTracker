@@ -12112,7 +12112,7 @@ The tracker must be the final content. Validate JSON, complete fields, types, ca
   }
 };
 
-// src/templatePresets.ts
+// src/shared/templatePresets.ts
 var PRESETS = [
   {
     id: "bento-style-tracker",
@@ -18215,7 +18215,7 @@ function parse(src, reviver, options) {
   }
   return doc.toJS(Object.assign({ reviver: _reviver }, options));
 }
-// src/trackerData.ts
+// src/shared/trackerData.ts
 function cleanupPlusSigns(input) {
   return input.replace(/([\s:[,{])\+(\d+(?:\.\d+)?)([\s,}\]\n\r]|$)/g, "$1$2$3");
 }
@@ -18257,7 +18257,7 @@ function normalizeTrackerData(data) {
   };
 }
 
-// src/frontendReadyGate.ts
+// src/frontend/frontendReadyGate.ts
 var READY_MIN_VERSION = [1, 0, 6];
 function parseVersionSegment(segment) {
   if (!segment)
@@ -18318,7 +18318,7 @@ function createReadyGate(ctx) {
   };
 }
 
-// src/frontendTemplate.ts
+// src/frontend/frontendTemplate.ts
 var import_handlebars = __toESM(require_handlebars(), 1);
 var TEMPLATE_CACHE = new Map;
 function resolveTrackerMountMode(preset) {
@@ -18388,7 +18388,7 @@ function compileTemplate(preset) {
   }
 }
 
-// src/trackerViewData.ts
+// src/frontend/trackerViewData.ts
 function normalizeCharacters(data) {
   if (Array.isArray(data.characters))
     return data.characters;
@@ -18464,7 +18464,7 @@ function calculateStatChanges(currentCharacters, previous) {
   return changes;
 }
 
-// src/colorUtils.ts
+// src/frontend/colorUtils.ts
 function darkenColor(hex, amount = 20) {
   const clean = hex.replace("#", "");
   const r = Math.max(0, parseInt(clean.slice(0, 2), 16) - amount);
@@ -18561,7 +18561,7 @@ function adjustHslColor(hex, hueShift, saturationAdjust, lightnessAdjust) {
   return `#${rgb.r.toString(16).padStart(2, "0")}${rgb.g.toString(16).padStart(2, "0")}${rgb.b.toString(16).padStart(2, "0")}`;
 }
 
-// src/frontendBiology.ts
+// src/frontend/frontendBiology.ts
 var FERTILITY_STAGE_BY_ID = {
   1: "menstruation",
   2: "follicular",
@@ -18974,7 +18974,7 @@ function analShaftTopY(stats) {
   return ANAL_OPENING_Y - depth / 100 * (ANAL_OPENING_Y - ANAL_DEEP_Y);
 }
 
-// src/frontendTemplateRenderer.ts
+// src/frontend/frontendTemplateRenderer.ts
 function getReactionEmoji(value) {
   const num = Number(value);
   if (num === 1)
@@ -19081,7 +19081,7 @@ function rawJson(data) {
   }
 }
 
-// src/frontendPanel.ts
+// src/frontend/frontendPanel.ts
 var DEFAULT_PANEL_STATUS = "Waiting for tracker tag...";
 var LOADING_CONFIG_STATUS = "Loading config...";
 var CONFIG_ERROR_STATUS_PREFIX = "Config load failed:";
@@ -19227,7 +19227,7 @@ var PANEL_CSS = `
   .sst-theme-tactical #silly-sim-tracker-container { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lumiverse-accent) 15%, transparent); }
 `;
 
-// src/frontendTemplateHelpers.ts
+// src/frontend/frontendTemplateHelpers.ts
 var import_handlebars2 = __toESM(require_handlebars(), 1);
 var helpersRegistered = false;
 function registerTemplateHelpers() {
@@ -19308,7 +19308,7 @@ function registerTemplateHelpers() {
   import_handlebars2.default.registerHelper("adjustHSL", (hexColor, hueShift, saturationAdjust, lightnessAdjust) => adjustHslColor(String(hexColor || "#000000"), Number(hueShift) || 0, Number(saturationAdjust) || 0, Number(lightnessAdjust) || 0));
 }
 
-// src/inlineTemplates.ts
+// src/frontend/inlineTemplates.ts
 var import_handlebars3 = __toESM(require_handlebars(), 1);
 var LEGACY_MARKER_REGEX = /\[\[(?:DISPLAY|D)=([^,\]]+),\s*DATA=(\{[\s\S]*?\})\s*\]\]/g;
 var INLINE_TAG = "sst-inline";
@@ -19603,7 +19603,7 @@ function createInlineTemplateProcessor(deps) {
   return { processMessage, processAll, clearMessage, observeDocument, destroy };
 }
 
-// src/trackerConfig.ts
+// src/shared/trackerConfig.ts
 var FERTILITY_CYCLE_BIAS_VALUES = [
   "random",
   "menstruating",
@@ -19639,7 +19639,7 @@ var DEFAULT_CONFIG = {
   typeSafeConfidenceFloor: 0.6
 };
 
-// src/frontendMessageSyntax.ts
+// src/frontend/frontendMessageSyntax.ts
 function sanitizeIdentifier(value) {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "sim";
 }
@@ -19702,7 +19702,7 @@ function readMessageContext(payload) {
   };
 }
 
-// src/trackerSyntax.ts
+// src/shared/trackerSyntax.ts
 function sanitizeIdentifier2(value) {
   if (typeof value !== "string")
     return DEFAULT_CONFIG.codeBlockIdentifier;
@@ -19720,7 +19720,7 @@ function sanitizeTagName2(value) {
   return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
 }
 
-// src/frontendSettingsValues.ts
+// src/frontend/frontendSettingsValues.ts
 function sanitizeRetainCount(value) {
   const num = Number(value);
   if (Number.isNaN(num))
@@ -19761,7 +19761,7 @@ function buildSavedFrontendConfig(config, values, fallbackId) {
   };
 }
 
-// src/frontend.ts
+// src/frontend/index.ts
 var BUILTIN_PRESETS = getTemplatePresets();
 var runtimeSeededPresets = [];
 var panelRoot = null;

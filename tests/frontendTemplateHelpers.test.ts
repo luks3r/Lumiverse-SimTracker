@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import Handlebars from "handlebars";
-import { registerTemplateHelpers } from "../src/frontendTemplateHelpers";
+import { registerTemplateHelpers } from "../src/frontend/frontendTemplateHelpers";
 
 describe("frontend template helper registration", () => {
   test("registers arithmetic and boolean helpers once", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readMessageContext } from "../src/backendMessageContext";
+import { readMessageContext } from "../src/backend/backendMessageContext";
 
 describe("backend message context", () => {
   test("uses nested content and explicit outer IDs first", () => {

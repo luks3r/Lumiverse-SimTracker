@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { formatTrackerForPrompt, parseGeneratedTrackerPayload, parseTrackerPayload } from "../src/trackerPayload";
-import { parseTrackerBlock } from "../src/trackerData";
+import { formatTrackerForPrompt, parseGeneratedTrackerPayload, parseTrackerPayload } from "../src/backend/trackerPayload";
+import { parseTrackerBlock } from "../src/shared/trackerData";
 
 describe("tracker payload parsing", () => {
   test("accepts JSON and YAML with equivalent data", () => {

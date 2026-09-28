@@ -6729,7 +6729,7 @@ The tracker must be the final content. Validate JSON, complete fields, types, ca
   }
 };
 
-// src/templatePresets.ts
+// src/shared/templatePresets.ts
 var PRESETS = [
   {
     id: "bento-style-tracker",
@@ -12857,7 +12857,7 @@ function stringify3(value, replacer, options) {
     return value.toString(options);
   return new Document(value, _replacer, options).toString(options);
 }
-// src/trackerPayload.ts
+// src/backend/trackerPayload.ts
 function parseTrackerPayload(raw) {
   const cleaned = raw.trim().replace(/([\s:[,{])\+(\d+(?:\.\d+)?)([\s,}\]\n\r]|$)/g, "$1$2$3");
   if (!cleaned)
@@ -12953,7 +12953,7 @@ function formatTrackerForPrompt(raw) {
 `);
 }
 
-// src/trackerExample.ts
+// src/backend/trackerExample.ts
 function setDeep(target, path, value) {
   const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0)
@@ -13051,7 +13051,7 @@ function inferExampleValue(key, description) {
   return "";
 }
 
-// src/trackerConfig.ts
+// src/shared/trackerConfig.ts
 var FERTILITY_CYCLE_BIAS_VALUES = [
   "random",
   "menstruating",
@@ -13087,7 +13087,7 @@ var DEFAULT_CONFIG = {
   typeSafeConfidenceFloor: 0.6
 };
 
-// src/trackerSyntax.ts
+// src/shared/trackerSyntax.ts
 function sanitizeIdentifier(value) {
   if (typeof value !== "string")
     return DEFAULT_CONFIG.codeBlockIdentifier;
@@ -13154,7 +13154,7 @@ function extractTrackerTagLoose(message, tagName) {
   return match ? (match[2] || "").trim() || null : null;
 }
 
-// src/trackerCommandText.ts
+// src/backend/trackerCommandText.ts
 function buildTemplateExampleData(preset) {
   const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
   const worldData = {
@@ -13212,7 +13212,7 @@ function replaceTrackerBlock(content, identifier, replacementBlock, tagName) {
   return withTag.replace(re, replacementBlock);
 }
 
-// src/fertilityCycleHint.ts
+// src/shared/fertilityCycleHint.ts
 function pickInitialCycleState(bias) {
   const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
   switch (bias) {
@@ -13255,7 +13255,7 @@ function buildFirstMessageHint(bias) {
   return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
 }
 
-// src/presetSanitizers.ts
+// src/backend/presetSanitizers.ts
 function upgradeLegacyImportedPreset(preset) {
   const html = preset.htmlTemplate || "";
   const isMissingAttire = !html.includes("nw-attire");
@@ -13321,7 +13321,7 @@ function sanitizeInlinePacks(value) {
   return value.filter((item) => item && typeof item === "object");
 }
 
-// src/backendConfig.ts
+// src/backend/backendConfig.ts
 function sanitizeTrackerFormat(value) {
   return value === "yaml" ? "yaml" : "json";
 }
@@ -13429,7 +13429,7 @@ function mergeTrackerConfig(config, incoming) {
   };
 }
 
-// src/trackerMessageCodec.ts
+// src/backend/trackerMessageCodec.ts
 function createTrackerMessageCodec(readConfig) {
   const config = {
     get trackerTagName() {
@@ -13532,7 +13532,7 @@ ${payload.trim()}
   return { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload };
 }
 
-// src/trackerPromptRetention.ts
+// src/backend/trackerPromptRetention.ts
 function createTrackerPromptRetention(readConfig, codec) {
   const config = {
     get trackerTagName() {
@@ -13749,7 +13749,7 @@ ${snapshots}`;
   return { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective };
 }
 
-// src/trackerHistory.ts
+// src/backend/trackerHistory.ts
 function createTrackerHistory(deps) {
   const chatTrackerHistory = new Map;
   const rehydratedChats = new Set;
@@ -13847,7 +13847,7 @@ function createTrackerHistory(deps) {
   return { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChatTrackerHistory, getRecentChatTrackers };
 }
 
-// src/trackerLegacyMigration.ts
+// src/backend/trackerLegacyMigration.ts
 function createLegacyTrackerNormalizer(deps) {
   return async function normalizeLegacyTrackersInChat(chatId, scanTail = Number.MAX_SAFE_INTEGER) {
     const messages = await deps.getMessages(chatId);
@@ -13885,7 +13885,7 @@ function createLegacyTrackerNormalizer(deps) {
   };
 }
 
-// src/conceptionRules.ts
+// src/backend/conceptionRules.ts
 var CONCEPTION_CONFIG = {
   threshold: 85,
   autoAt: 100,
@@ -13928,7 +13928,7 @@ function coinFlip() {
   return Math.random() < 0.5;
 }
 
-// src/conceptionFlow.ts
+// src/backend/conceptionFlow.ts
 function latestNarrativeBeat(messages) {
   for (let i = messages.length - 1;i >= 0; i -= 1) {
     const msg = messages[i];
@@ -13986,7 +13986,7 @@ function buildConceptionDirective(names) {
   return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
 }
 
-// src/seededPresets.ts
+// src/backend/seededPresets.ts
 async function discoverSeededPresets(storage) {
   const seeded = [];
   try {
@@ -14044,7 +14044,7 @@ async function discoverSeededPresets(storage) {
   return seeded;
 }
 
-// src/importedPreset.ts
+// src/backend/importedPreset.ts
 function isInlinePackOnly(parsed) {
   const hasInlineTemplates = Array.isArray(parsed.inlineTemplates) && parsed.inlineTemplates.length > 0;
   const hasTrackerTemplate = typeof parsed.htmlTemplate === "string" || typeof parsed.sysPrompt === "string" || Array.isArray(parsed.customFields) || parsed.extSettings && typeof parsed.extSettings === "object";
@@ -14066,7 +14066,7 @@ function buildImportedPreset(parsed, timestamp2) {
   };
 }
 
-// src/importService.ts
+// src/backend/importService.ts
 function createImportService(deps) {
   return async function handleImportPresetFile(payload, userId) {
     const text = typeof payload.text === "string" ? payload.text : "";
@@ -14142,7 +14142,7 @@ function createImportService(deps) {
   };
 }
 
-// src/secondaryPromptText.ts
+// src/backend/secondaryPromptText.ts
 function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
   if (!base)
     return base;
@@ -14196,7 +14196,7 @@ function stripStructuralHTML(text) {
   return stripped.replace(/\s+/g, " ").trim();
 }
 
-// src/secondaryPrompt.ts
+// src/backend/secondaryPrompt.ts
 function buildSecondaryPrompt(options) {
   const tagRe = buildTrackerTagRegex(options.tagName, "ig");
   const fenceRe = buildTrackerFenceRegex(options.identifier, "gi");
@@ -14245,7 +14245,7 @@ Based on the above conversation${hasHistory ? " and the previous tracker state(s
   return { cleanedMessages, conversationText };
 }
 
-// src/secondaryHistory.ts
+// src/backend/secondaryHistory.ts
 function collectSecondaryHistory(options) {
   const retainSetting = Number.isFinite(options.retainTrackerCount) ? options.retainTrackerCount : 3;
   const historyLimit = Math.max(0, Math.min(10, retainSetting));
@@ -14265,7 +14265,7 @@ function collectSecondaryHistory(options) {
   return historicalTrackers;
 }
 
-// src/secondaryConnection.ts
+// src/backend/secondaryConnection.ts
 var MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
 function resolveSecondaryConnection(connections, selectedConnectionId, configuredModel) {
   const connection = selectedConnectionId ? connections.find((item) => item.id === selectedConnectionId) : connections.find((item) => item.is_default);
@@ -14282,7 +14282,7 @@ function resolveSecondaryConnection(connections, selectedConnectionId, configure
   return { ok: true, connection, provider, model };
 }
 
-// src/commandEngine.ts
+// src/backend/commandEngine.ts
 function createCommandEngine(deps) {
   function formatTrackerPayload2(data, format, identifier) {
     return formatTrackerPayload(data, format, identifier, deps.readConfig().trackerTagName);
@@ -14477,7 +14477,7 @@ ${block}`;
   return { handleSlashCommand };
 }
 
-// src/settingsStore.ts
+// src/backend/settingsStore.ts
 var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
 var CONFIG_PATH = "preferences.json";
 function createSettingsStore(deps) {
@@ -14527,7 +14527,7 @@ function createSettingsStore(deps) {
   return { loadConfig, saveConfig, syncTypeSafeKeyToEnclave };
 }
 
-// src/backendMessageContext.ts
+// src/backend/backendMessageContext.ts
 function readMessageContext(payload) {
   if (!payload || typeof payload !== "object") {
     return { chatId: null, messageId: null, content: null };
@@ -14547,7 +14547,7 @@ function readMessageContext(payload) {
   };
 }
 
-// src/trackerData.ts
+// src/shared/trackerData.ts
 function normalizeTrackerData(data) {
   if (Array.isArray(data.characters)) {
     return data;
@@ -14566,7 +14566,7 @@ function normalizeTrackerData(data) {
   };
 }
 
-// src/typesafe.ts
+// src/backend/typesafe.ts
 var TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 async function evaluateTypeSafe(transport, settings, state, questions, timeoutMs = 20000) {
   if (!settings.apiKey)
@@ -14935,7 +14935,7 @@ function interpretConceptionAnswers(answers, candidates, fireThreshold = CONCEPT
   return fired;
 }
 
-// src/backend.ts
+// src/backend/index.ts
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
 var config = { ...DEFAULT_CONFIG };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "../src/secondaryPromptText";
+import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "../src/backend/secondaryPromptText";
 
 describe("secondary prompt text", () => {
   test("rewrites tracker-shaped fences and references, preserving unrelated JSON", () => {

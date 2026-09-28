@@ -29,7 +29,7 @@
 // `cors` transport (spindle.cors + the `cors_proxy` permission), so all
 // logic here is exercisable without Lumiverse.
 
-import { normalizeTrackerData } from "./trackerData";
+import { normalizeTrackerData } from "../shared/trackerData";
 
 // ── Wire types (docs.typesafe.ai/api) ──────────────────────────────────
 

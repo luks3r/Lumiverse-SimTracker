@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { adjustColorBrightness, adjustHslColor, darkenColor, normalizeHexColor } from "../src/colorUtils";
+import { adjustColorBrightness, adjustHslColor, darkenColor, normalizeHexColor } from "../src/frontend/colorUtils";
 
 describe("tracker colors", () => {
   test("normalizes short and long hex values and applies fallback", () => {

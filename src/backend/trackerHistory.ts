@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG } from "./trackerConfig";
+import { DEFAULT_CONFIG } from "../shared/trackerConfig";
 
 export type TrackerHistoryEntry = { messageId: string; payload: string };
 

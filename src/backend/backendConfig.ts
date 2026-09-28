@@ -1,6 +1,6 @@
-import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "./trackerConfig";
+import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "../shared/trackerConfig";
 import { sanitizeInlinePacks, sanitizePresetArray } from "./presetSanitizers";
-import { sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 
 export function sanitizeTrackerFormat(value: unknown): "json" | "yaml" {
   return value === "yaml" ? "yaml" : "json";

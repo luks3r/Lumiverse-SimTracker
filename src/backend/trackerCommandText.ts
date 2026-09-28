@@ -1,7 +1,7 @@
 import { stringify as stringifyYaml } from "yaml";
 import { inferExampleValue, setDeep } from "./trackerExample";
-import type { TemplatePreset } from "./templatePresets";
-import { buildTrackerFenceRegex, buildTrackerTagRegex, parseTagAttributes, sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
+import type { TemplatePreset } from "../shared/templatePresets";
+import { buildTrackerFenceRegex, buildTrackerTagRegex, parseTagAttributes, sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 
 export function buildTemplateExampleData(preset: TemplatePreset): Record<string, unknown> {
   const fields = Array.isArray(preset.customFields) ? preset.customFields : [];

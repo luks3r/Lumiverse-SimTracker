@@ -1,4 +1,4 @@
-import type { TemplatePreset } from "./templatePresets";
+import type { TemplatePreset } from "../shared/templatePresets";
 
 export function isInlinePackOnly(parsed: Record<string, unknown>): boolean {
   const hasInlineTemplates = Array.isArray(parsed.inlineTemplates) && parsed.inlineTemplates.length > 0;

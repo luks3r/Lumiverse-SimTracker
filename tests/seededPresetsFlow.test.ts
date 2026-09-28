@@ -32,7 +32,7 @@ test("settings include valid seeded presets discovered in nested template folder
     },
   };
   (globalThis as { spindle?: unknown }).spindle = spindle;
-  await import("../src/backend.ts?seeded-presets-flow");
+  await import("../src/backend/index.ts?seeded-presets-flow");
   if (!frontendHandler) throw new Error("Frontend handler missing");
   await frontendHandler({ type: "get_config" }, "seeded-user");
 

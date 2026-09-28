@@ -1,5 +1,5 @@
 import { formatTrackerForPrompt } from "./trackerPayload";
-import { buildTrackerFenceRegex, buildTrackerTagRegex } from "./trackerSyntax";
+import { buildTrackerFenceRegex, buildTrackerTagRegex } from "../shared/trackerSyntax";
 import { stripStructuralHTML } from "./secondaryPromptText";
 
 export function buildSecondaryPrompt(options: {
