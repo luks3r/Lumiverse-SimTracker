@@ -29,3 +29,4 @@ docs/template-guide-bundled-javascript-dead.md
 node_modules/
 AGENTS.md
 extracted/
+.serena/
