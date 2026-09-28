@@ -11,8 +11,9 @@ import { createTrackerPromptRetention } from "./trackerPromptRetention";
 import { createTrackerHistory } from "./trackerHistory";
 import { createLegacyTrackerNormalizer } from "./trackerLegacyMigration";
 import { buildConceptionDirective, latestNarrativeBeat, planForcedConception, rewriteTrackerInMessages, type ConceptionMutation } from "./conceptionFlow";
+import { discoverSeededPresets } from "./seededPresets";
+import { buildImportedPreset, isInlinePackOnly } from "./importedPreset";
 import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "./secondaryPromptText";
-import { sanitizeInlinePacks, sanitizePresetArray, sanitizeSinglePreset } from "./presetSanitizers";
 import { readMessageContext, type MessageContext } from "./backendMessageContext";
 import { CONCEPTION_CONFIG, coinFlip, extractCurrentDate, getCharactersFromPayload, isAlreadyConceivedOrPregnant, isFemaleOrFuta, isInFertileWindow, type CharacterStats } from "./conceptionRules";
 import {
@@ -596,71 +597,12 @@ async function ensureConfigForUser(userId?: string | null): Promise<void> {
 
 async function loadSeededTemplatePresets(): Promise<void> {
   if (runtime.seededPresetsLoaded) return;
-  const seeded: TemplatePreset[] = [];
-  try {
-    const templatesRoot = "templates";
-    const hasTemplatesDir = await spindle.storage.exists(templatesRoot);
-    if (!hasTemplatesDir) {
-      runtime.seededPresets = [];
-      runtime.seededPresetsLoaded = true;
-      return;
-    }
-
-    const visited = new Set<string>();
-    const jsonPaths = new Set<string>();
-
-    const toStoragePath = (entry: string, base: string): string => {
-      const normalized = entry.replace(/^\/+/, "").replace(/\\/g, "/");
-      if (!normalized) return base;
-      if (normalized === base || normalized.startsWith(`${base}/`)) return normalized;
-      return `${base}/${normalized}`;
-    };
-
-    const walk = async (dirPath: string): Promise<void> => {
-      if (visited.has(dirPath)) return;
-      visited.add(dirPath);
-
-      const entries = await spindle.storage.list(dirPath);
-      for (const entry of entries) {
-        const fullPath = toStoragePath(entry, dirPath);
-        try {
-          const stat = await spindle.storage.stat(fullPath);
-          if (!stat.exists) continue;
-          if (stat.isDirectory) {
-            await walk(fullPath);
-            continue;
-          }
-          if (stat.isFile && fullPath.toLowerCase().endsWith(".json")) {
-            jsonPaths.add(fullPath);
-          }
-        } catch {
-          // Ignore unreadable path and continue traversal.
-        }
-      }
-    };
-
-    await walk(templatesRoot);
-
-    for (const path of jsonPaths) {
-      try {
-        const stat = await spindle.storage.stat(path);
-        if (!stat.exists || !stat.isFile) continue;
-        const fileName = path.split("/").pop() || "seeded-template";
-        const fileId = fileName.replace(/\.json$/i, "").replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
-        const parsed = await spindle.storage.getJson<Record<string, unknown>>(path, { fallback: {} });
-        const preset = sanitizeSinglePreset(parsed, fileId);
-        if (preset && preset.htmlTemplate) {
-          seeded.push(preset);
-        }
-      } catch {
-        // Skip invalid seed files.
-      }
-    }
-  } catch {
-    // Ignore seed loading failures and continue with bundled presets.
-  }
-
-  runtime.seededPresets = seeded;
+  runtime.seededPresets = await discoverSeededPresets({
+    exists: (path) => spindle.storage.exists(path),
+    list: (path) => spindle.storage.list(path),
+    stat: (path) => spindle.storage.stat(path),
+    getJson: (path) => spindle.storage.getJson<Record<string, unknown>>(path, { fallback: {} }),
+  });
   runtime.seededPresetsLoaded = true;
 }
 
@@ -1768,14 +1710,7 @@ async function handleImportPresetFile(payload: Record<string, unknown>, userId: 
     return;
   }
 
-  const hasInlineTemplates = Array.isArray(parsed.inlineTemplates) && parsed.inlineTemplates.length > 0;
-  const hasTrackerTemplate =
-    typeof parsed.htmlTemplate === "string"
-    || typeof parsed.sysPrompt === "string"
-    || Array.isArray(parsed.customFields)
-    || (parsed.extSettings && typeof parsed.extSettings === "object");
-
-  if (hasInlineTemplates && !hasTrackerTemplate) {
+  if (isInlinePackOnly(parsed)) {
     config = { ...config, inlinePacks: [...config.inlinePacks, parsed] };
     await saveConfig(userId);
     pushMacroValues();
@@ -1789,21 +1724,7 @@ async function handleImportPresetFile(payload: Record<string, unknown>, userId: 
     return;
   }
 
-  const idBase = String(parsed.templateName || "user_preset").toLowerCase().replace(/[^a-z0-9_]+/g, "_");
-  const preset: TemplatePreset = {
-    id: `${idBase}_${Date.now()}`,
-    templateName: String(parsed.templateName || "Imported Preset"),
-    templateAuthor: String(parsed.templateAuthor || "User"),
-    htmlTemplate: typeof parsed.htmlTemplate === "string" ? parsed.htmlTemplate : "",
-    sysPrompt: typeof parsed.sysPrompt === "string" ? parsed.sysPrompt : "",
-    displayInstructions: typeof parsed.displayInstructions === "string" ? parsed.displayInstructions : "",
-    inlineTemplatesEnabled: typeof parsed.inlineTemplatesEnabled === "boolean" ? parsed.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(parsed.inlineTemplates) ? parsed.inlineTemplates : [],
-    customFields: Array.isArray(parsed.customFields)
-      ? (parsed.customFields as Array<{ key: string; description: string }>)
-      : [],
-    extSettings: (parsed.extSettings && typeof parsed.extSettings === "object" ? parsed.extSettings : {}) as Record<string, unknown>,
-  };
+  const preset = buildImportedPreset(parsed, Date.now());
 
   config = {
     ...config,

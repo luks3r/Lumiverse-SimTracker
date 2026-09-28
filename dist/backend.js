@@ -13986,6 +13986,86 @@ function buildConceptionDirective(names) {
   return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
 }
 
+// src/seededPresets.ts
+async function discoverSeededPresets(storage) {
+  const seeded = [];
+  try {
+    const templatesRoot = "templates";
+    const hasTemplatesDir = await storage.exists(templatesRoot);
+    if (!hasTemplatesDir)
+      return [];
+    const visited = new Set;
+    const jsonPaths = new Set;
+    const toStoragePath = (entry, base) => {
+      const normalized = entry.replace(/^\/+/, "").replace(/\\/g, "/");
+      if (!normalized)
+        return base;
+      if (normalized === base || normalized.startsWith(`${base}/`))
+        return normalized;
+      return `${base}/${normalized}`;
+    };
+    const walk = async (dirPath) => {
+      if (visited.has(dirPath))
+        return;
+      visited.add(dirPath);
+      const entries = await storage.list(dirPath);
+      for (const entry of entries) {
+        const fullPath = toStoragePath(entry, dirPath);
+        try {
+          const stat = await storage.stat(fullPath);
+          if (!stat.exists)
+            continue;
+          if (stat.isDirectory) {
+            await walk(fullPath);
+            continue;
+          }
+          if (stat.isFile && fullPath.toLowerCase().endsWith(".json")) {
+            jsonPaths.add(fullPath);
+          }
+        } catch {}
+      }
+    };
+    await walk(templatesRoot);
+    for (const path of jsonPaths) {
+      try {
+        const stat = await storage.stat(path);
+        if (!stat.exists || !stat.isFile)
+          continue;
+        const fileName = path.split("/").pop() || "seeded-template";
+        const fileId = fileName.replace(/\.json$/i, "").replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
+        const parsed = await storage.getJson(path);
+        const preset = sanitizeSinglePreset(parsed, fileId);
+        if (preset && preset.htmlTemplate) {
+          seeded.push(preset);
+        }
+      } catch {}
+    }
+  } catch {}
+  return seeded;
+}
+
+// src/importedPreset.ts
+function isInlinePackOnly(parsed) {
+  const hasInlineTemplates = Array.isArray(parsed.inlineTemplates) && parsed.inlineTemplates.length > 0;
+  const hasTrackerTemplate = typeof parsed.htmlTemplate === "string" || typeof parsed.sysPrompt === "string" || Array.isArray(parsed.customFields) || parsed.extSettings && typeof parsed.extSettings === "object";
+  return Boolean(hasInlineTemplates && !hasTrackerTemplate);
+}
+function buildImportedPreset(parsed, timestamp2) {
+  const idBase = String(parsed.templateName || "user_preset").toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  return {
+    id: `${idBase}_${timestamp2}`,
+    templateName: String(parsed.templateName || "Imported Preset"),
+    templateAuthor: String(parsed.templateAuthor || "User"),
+    htmlTemplate: typeof parsed.htmlTemplate === "string" ? parsed.htmlTemplate : "",
+    sysPrompt: typeof parsed.sysPrompt === "string" ? parsed.sysPrompt : "",
+    displayInstructions: typeof parsed.displayInstructions === "string" ? parsed.displayInstructions : "",
+    inlineTemplatesEnabled: typeof parsed.inlineTemplatesEnabled === "boolean" ? parsed.inlineTemplatesEnabled : false,
+    inlineTemplates: Array.isArray(parsed.inlineTemplates) ? parsed.inlineTemplates : [],
+    customFields: Array.isArray(parsed.customFields) ? parsed.customFields : [],
+    extSettings: parsed.extSettings && typeof parsed.extSettings === "object" ? parsed.extSettings : {}
+  };
+}
+
 // src/secondaryPromptText.ts
 function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
   if (!base)
@@ -14788,63 +14868,12 @@ async function ensureConfigForUser(userId) {
 async function loadSeededTemplatePresets() {
   if (runtime.seededPresetsLoaded)
     return;
-  const seeded = [];
-  try {
-    const templatesRoot = "templates";
-    const hasTemplatesDir = await spindle.storage.exists(templatesRoot);
-    if (!hasTemplatesDir) {
-      runtime.seededPresets = [];
-      runtime.seededPresetsLoaded = true;
-      return;
-    }
-    const visited = new Set;
-    const jsonPaths = new Set;
-    const toStoragePath = (entry, base) => {
-      const normalized = entry.replace(/^\/+/, "").replace(/\\/g, "/");
-      if (!normalized)
-        return base;
-      if (normalized === base || normalized.startsWith(`${base}/`))
-        return normalized;
-      return `${base}/${normalized}`;
-    };
-    const walk = async (dirPath) => {
-      if (visited.has(dirPath))
-        return;
-      visited.add(dirPath);
-      const entries = await spindle.storage.list(dirPath);
-      for (const entry of entries) {
-        const fullPath = toStoragePath(entry, dirPath);
-        try {
-          const stat = await spindle.storage.stat(fullPath);
-          if (!stat.exists)
-            continue;
-          if (stat.isDirectory) {
-            await walk(fullPath);
-            continue;
-          }
-          if (stat.isFile && fullPath.toLowerCase().endsWith(".json")) {
-            jsonPaths.add(fullPath);
-          }
-        } catch {}
-      }
-    };
-    await walk(templatesRoot);
-    for (const path of jsonPaths) {
-      try {
-        const stat = await spindle.storage.stat(path);
-        if (!stat.exists || !stat.isFile)
-          continue;
-        const fileName = path.split("/").pop() || "seeded-template";
-        const fileId = fileName.replace(/\.json$/i, "").replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
-        const parsed = await spindle.storage.getJson(path, { fallback: {} });
-        const preset = sanitizeSinglePreset(parsed, fileId);
-        if (preset && preset.htmlTemplate) {
-          seeded.push(preset);
-        }
-      } catch {}
-    }
-  } catch {}
-  runtime.seededPresets = seeded;
+  runtime.seededPresets = await discoverSeededPresets({
+    exists: (path) => spindle.storage.exists(path),
+    list: (path) => spindle.storage.list(path),
+    stat: (path) => spindle.storage.stat(path),
+    getJson: (path) => spindle.storage.getJson(path, { fallback: {} })
+  });
   runtime.seededPresetsLoaded = true;
 }
 async function saveConfig(userId, configToSave = config) {
@@ -15612,9 +15641,7 @@ async function handleImportPresetFile(payload, userId) {
     await trackEvent("sst.import.failed", { reason: "invalid_json", fileName }, { level: "warn" });
     return;
   }
-  const hasInlineTemplates = Array.isArray(parsed.inlineTemplates) && parsed.inlineTemplates.length > 0;
-  const hasTrackerTemplate = typeof parsed.htmlTemplate === "string" || typeof parsed.sysPrompt === "string" || Array.isArray(parsed.customFields) || parsed.extSettings && typeof parsed.extSettings === "object";
-  if (hasInlineTemplates && !hasTrackerTemplate) {
+  if (isInlinePackOnly(parsed)) {
     config = { ...config, inlinePacks: [...config.inlinePacks, parsed] };
     await saveConfig(userId);
     pushMacroValues();
@@ -15627,19 +15654,7 @@ async function handleImportPresetFile(payload, userId) {
     await trackEvent("sst.import.inline_pack", { fileName }, { level: "info" });
     return;
   }
-  const idBase = String(parsed.templateName || "user_preset").toLowerCase().replace(/[^a-z0-9_]+/g, "_");
-  const preset = {
-    id: `${idBase}_${Date.now()}`,
-    templateName: String(parsed.templateName || "Imported Preset"),
-    templateAuthor: String(parsed.templateAuthor || "User"),
-    htmlTemplate: typeof parsed.htmlTemplate === "string" ? parsed.htmlTemplate : "",
-    sysPrompt: typeof parsed.sysPrompt === "string" ? parsed.sysPrompt : "",
-    displayInstructions: typeof parsed.displayInstructions === "string" ? parsed.displayInstructions : "",
-    inlineTemplatesEnabled: typeof parsed.inlineTemplatesEnabled === "boolean" ? parsed.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(parsed.inlineTemplates) ? parsed.inlineTemplates : [],
-    customFields: Array.isArray(parsed.customFields) ? parsed.customFields : [],
-    extSettings: parsed.extSettings && typeof parsed.extSettings === "object" ? parsed.extSettings : {}
-  };
+  const preset = buildImportedPreset(parsed, Date.now());
   config = {
     ...config,
     userPresets: [...config.userPresets, preset],

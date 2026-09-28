@@ -105,6 +105,36 @@ describe("backend host flows", () => {
     expect(updated.some((message) => message.type === "config_saved")).toBe(true);
   });
 
+  test("preset import reports invalid JSON and adds a valid preset", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const invalid = await sendFrontend({ type: "import_preset_file", fileName: "bad.json", text: "{" });
+    expect(invalid.find((message) => message.type === "import_result")).toMatchObject({ ok: false, message: "Import failed (invalid JSON)." });
+
+    const imported = await sendFrontend({
+      type: "import_preset_file",
+      fileName: "custom.json",
+      text: JSON.stringify({ templateName: "Custom", htmlTemplate: "<div>custom</div>", sysPrompt: "Track values" }),
+    });
+    expect(imported.find((message) => message.type === "import_result")).toMatchObject({ ok: true, message: "Imported preset: Custom" });
+    const config = imported.find((message) => message.type === "config")?.config as FrontendMessage;
+    expect(config.userPresets).toMatchObject([{ templateName: "Custom", htmlTemplate: "<div>custom</div>", sysPrompt: "Track values" }]);
+  });
+
+  test("inline-only import is stored as a pack, not a tracker preset", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const imported = await sendFrontend({
+      type: "import_preset_file",
+      fileName: "inline.json",
+      text: JSON.stringify({ templateName: "Inline Only", inlineTemplates: [{ name: "Badge", template: "<b>{{value}}</b>" }] }),
+    });
+    expect(imported.find((message) => message.type === "import_result")).toMatchObject({ ok: true, message: "Imported inline pack: Inline Only" });
+    const config = imported.find((message) => message.type === "config")?.config as FrontendMessage;
+    expect(config.inlinePacks).toMatchObject([{ templateName: "Inline Only" }]);
+    expect(config.userPresets).toEqual([]);
+  });
+
   test("slash command converts latest tracker in chat", async () => {
     storedConfig = {};
     await sendFrontend({ type: "get_config" });
