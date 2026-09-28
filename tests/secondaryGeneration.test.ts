@@ -11,6 +11,7 @@ type Message = {
 };
 
 type GenerationRequest = {
+  connection_id?: string;
   provider?: string;
   model?: string;
   parameters?: Record<string, unknown>;
@@ -26,6 +27,7 @@ const notifications: Array<Record<string, unknown>> = [];
 let terminalNotification: ((message: Record<string, unknown>) => void) | null = null;
 let connectionModel = "gpt-test";
 let connectionProvider = "openai";
+let selectedConnectionId = "conn-1";
 let trackerFormat: "json" | "yaml" = "json";
 
 const spindle = {
@@ -49,7 +51,7 @@ const spindle = {
   userStorage: {
     getJson: async () => ({
       useSecondaryLLM: true,
-      secondaryLLMConnectionId: "conn-1",
+      secondaryLLMConnectionId: selectedConnectionId,
       secondaryLLMModel: "",
       retainTrackerCount: 0,
       trackerFormat,
@@ -72,6 +74,7 @@ const spindle = {
     raw: async (request: GenerationRequest) => {
       requests.push(request);
       if (!request.provider) throw new Error(`Unknown provider: ${request.provider ?? ""}`);
+      if (!request.connection_id) throw new Error("No API key provided. Pass api_key or connection_id in the request.");
       const content = outputs.shift();
       if (content === undefined) throw new Error("No mock generation output queued");
       return { content, finish_reason: "stop" };
@@ -88,7 +91,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; trackerFormat?: "json" | "yaml" } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; trackerFormat?: "json" | "yaml" } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -96,6 +99,7 @@ async function runGeneration(
   const initialContent = options.initialContent ?? "Narrative beat";
   connectionModel = options.connectionModel ?? "gpt-test";
   connectionProvider = options.connectionProvider ?? "openai";
+  selectedConnectionId = options.selectedConnectionId ?? "conn-1";
   trackerFormat = options.trackerFormat ?? "json";
   const message: Message = {
     id: messageId,
@@ -132,10 +136,18 @@ describe("secondary generation flow", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].model).toBe("gpt-test");
     expect(requests[0].provider).toBe("openai");
+    expect(requests[0].connection_id).toBe("conn-1");
     expect(requests[0].parameters?.model).toBe("gpt-test");
     expect(updates).toHaveLength(1);
     expect(message.content).toContain('<tracker type="sim">');
     expect(message.content).toContain('"ap": 75');
+  });
+
+  test("passes default connection id to generation", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], { selectedConnectionId: "" });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].connection_id).toBe("conn-1");
   });
 
   test("repairs invalid output once, then appends corrected tracker", async () => {

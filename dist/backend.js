@@ -14819,7 +14819,7 @@ async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
     const connections = await spindle.connections.list(activeUserId || undefined);
     const connection = config.secondaryLLMConnectionId ? connections.find((item) => item.id === config.secondaryLLMConnectionId) : connections.find((item) => item.is_default);
     const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
-    if (!provider) {
+    if (!connection || !provider) {
       const guidance = "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again.";
       spindle.log.warn(guidance);
       spindle.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, activeUserId || undefined);
@@ -14884,12 +14884,12 @@ Based on the above conversation${hasHistory ? " and the previous tracker state(s
       model: trimmedModel,
       temperature: config.secondaryLLMTemperature
     };
-    spindle.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${config.secondaryLLMConnectionId || "(default)"} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
+    spindle.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
     const generationRequest = {
       type: "raw",
       messages: llmMessages,
       parameters,
-      connection_id: config.secondaryLLMConnectionId || undefined,
+      connection_id: connection.id,
       userId: activeUserId || undefined,
       provider,
       model: trimmedModel

@@ -2028,7 +2028,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       ? connections.find((item) => item.id === config.secondaryLLMConnectionId)
       : connections.find((item) => item.is_default);
     const provider = typeof connection?.provider === "string" ? connection.provider.trim() : "";
-    if (!provider) {
+    if (!connection || !provider) {
       const guidance = "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again.";
       spindle.log.warn(guidance);
       spindle.sendToFrontend(
@@ -2092,7 +2092,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
     };
 
     spindle.log.info(
-      `Secondary LLM request → chat=${chatId} target=${targetMessageId} connection=${config.secondaryLLMConnectionId || "(default)"} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`,
+      `Secondary LLM request → chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`,
     );
     // The current `GenerationRequestDTO` only declares `parameters` for
     // overrides, but empirically Spindle strips `model` from `parameters`
@@ -2103,7 +2103,7 @@ async function generateTrackerWithSecondaryLLM(chatId: string, targetMessageId: 
       type: "raw" as const,
       messages: llmMessages,
       parameters,
-      connection_id: config.secondaryLLMConnectionId || undefined,
+      connection_id: connection.id,
       userId: activeUserId || undefined,
       provider,
       model: trimmedModel,
