@@ -5,17 +5,17 @@
     "": {
       "name": "silly-sim-tracker-lumiverse",
       "devDependencies": {
-        "handlebars": "^4.7.8",
-        "lumiverse-spindle-types": "0.6.8",
+        "handlebars": "^4.7.9",
+        "lumiverse-spindle-types": "0.6.36",
         "typescript": "^5.7.3",
-        "yaml": "^2.8.1",
+        "yaml": "^2.9.1",
       },
     },
   },
   "packages": {
-    "handlebars": ["handlebars@4.7.8", "", { "dependencies": { "minimist": "^1.2.5", "neo-async": "^2.6.2", "source-map": "^0.6.1", "wordwrap": "^1.0.0" }, "optionalDependencies": { "uglify-js": "^3.1.4" }, "bin": { "handlebars": "bin/handlebars" } }, "sha512-vafaFqs8MZkRrSX7sFVUdo3ap/eNiLnb4IakshzvP56X5Nr1iGKAIqdX6tMlm6HcNRIkr6AxO5jFEoJzzpT8aQ=="],
+    "handlebars": ["handlebars@4.7.9", "", { "dependencies": { "minimist": "^1.2.5", "neo-async": "^2.6.2", "source-map": "^0.6.1", "wordwrap": "^1.0.0" }, "optionalDependencies": { "uglify-js": "^3.1.4" }, "bin": { "handlebars": "bin/handlebars" } }, "sha512-4E71E0rpOaQuJR2A3xDZ+GM1HyWYv1clR58tC8emQNeQe3RH7MAzSbat+V0wG78LQBo6m6bzSG/L4pBuCsgnUQ=="],
 
-    "lumiverse-spindle-types": ["lumiverse-spindle-types@0.6.8", "", {}, "sha512-CGRhLCjefnFAhQKDPwDbA44WS1rWZaR54lZV6RtHr0U8QawfwM4EhB1gBP579meN3OHOhO883MiYGM/Ua3Uh0g=="],
+    "lumiverse-spindle-types": ["lumiverse-spindle-types@0.6.36", "", {}, "sha512-ngiQdsXOpngvpW5f0SHV3mZ0Gh+xHgcjZbeGmlmbUqplUSyQ0QlcF78VCodYTT5ZlhIWDGNRHcLuFEGtYtoKBw=="],
 
     "minimist": ["minimist@1.2.8", "", {}, "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="],
 
@@ -29,6 +29,6 @@
 
     "wordwrap": ["wordwrap@1.0.0", "", {}, "sha512-gvVzJFlPycKc5dZN4yPkP8w7Dc37BtP1yczEneOb4uq34pXZcvrtRTmWV8W+Ume+XCxKgbjM+nevkyFPMybd4Q=="],
 
-    "yaml": ["yaml@2.8.2", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-mplynKqc1C2hTVYxd0PU2xQAc22TI1vShAYGksCCfxbn/dFwnHTNi1bvYsBTkhdUNtGIf5xNOg938rrSSYvS9A=="],
+    "yaml": ["yaml@2.9.1", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
   }
 }

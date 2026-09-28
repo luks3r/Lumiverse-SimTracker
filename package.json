@@ -9,9 +9,9 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "handlebars": "^4.7.8",
-    "lumiverse-spindle-types": "0.6.8",
+    "handlebars": "^4.7.9",
+    "lumiverse-spindle-types": "0.6.36",
     "typescript": "^5.7.3",
-    "yaml": "^2.8.1"
+    "yaml": "^2.9.1"
   }
 }
