@@ -13749,6 +13749,243 @@ ${snapshots}`;
   return { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective };
 }
 
+// src/trackerHistory.ts
+function createTrackerHistory(deps) {
+  const chatTrackerHistory = new Map;
+  const rehydratedChats = new Set;
+  function recordChatTracker(chatId, messageId, payload) {
+    if (!chatId || !messageId)
+      return;
+    const trimmed = payload.trim();
+    if (!trimmed)
+      return;
+    let history = chatTrackerHistory.get(chatId);
+    if (!history) {
+      history = [];
+      chatTrackerHistory.set(chatId, history);
+    }
+    const existingIdx = history.findIndex((entry) => entry.messageId === messageId);
+    if (existingIdx >= 0) {
+      history[existingIdx] = { messageId, payload: trimmed };
+    } else {
+      history.push({ messageId, payload: trimmed });
+    }
+  }
+  function forgetChatTracker(chatId, messageId) {
+    if (!chatId || !messageId)
+      return;
+    const history = chatTrackerHistory.get(chatId);
+    if (!history)
+      return;
+    const idx = history.findIndex((entry) => entry.messageId === messageId);
+    if (idx >= 0)
+      history.splice(idx, 1);
+  }
+  function getChatTrackerHistory(chatId) {
+    if (!chatId)
+      return [];
+    return chatTrackerHistory.get(chatId) || [];
+  }
+  async function rehydrateChatTrackerHistory(chatId) {
+    if (!chatId)
+      return;
+    if (rehydratedChats.has(chatId))
+      return;
+    try {
+      const retainCount = deps.readRetainCount();
+      const retainSetting = Number.isFinite(retainCount) ? retainCount : DEFAULT_CONFIG.retainTrackerCount;
+      const historyLimit = Math.max(3, Math.min(20, retainSetting + 2));
+      const scanTail = Math.max(200, historyLimit * 5);
+      const messages = await deps.normalizeLegacyTrackersInChat(chatId, scanTail);
+      rehydratedChats.add(chatId);
+      let history = chatTrackerHistory.get(chatId);
+      if (!history) {
+        history = [];
+        chatTrackerHistory.set(chatId, history);
+      }
+      const known = new Set(history.map((entry) => entry.messageId));
+      const found = [];
+      for (let i = messages.length - 1;i >= 0 && found.length < historyLimit; i -= 1) {
+        const msg = messages[i];
+        if (known.has(msg.id))
+          continue;
+        const payload = deps.extractTrackerPayloadFromMessage(msg.content);
+        if (payload) {
+          found.unshift({ messageId: msg.id, payload: payload.trim() });
+          known.add(msg.id);
+        }
+      }
+      if (found.length > 0) {
+        history.push(...found);
+      }
+      const order = new Map;
+      messages.forEach((msg, idx) => order.set(msg.id, idx));
+      history.sort((a, b) => {
+        const ai = order.get(a.messageId);
+        const bi = order.get(b.messageId);
+        if (ai === undefined && bi === undefined)
+          return 0;
+        if (ai === undefined)
+          return 1;
+        if (bi === undefined)
+          return -1;
+        return ai - bi;
+      });
+    } catch {}
+  }
+  function getRecentChatTrackers(chatId, limit, excludeMessageId) {
+    if (!chatId || limit <= 0)
+      return [];
+    const history = chatTrackerHistory.get(chatId);
+    if (!history || history.length === 0)
+      return [];
+    const filtered = excludeMessageId ? history.filter((entry) => entry.messageId !== excludeMessageId) : history.slice();
+    if (filtered.length <= limit)
+      return filtered;
+    return filtered.slice(filtered.length - limit);
+  }
+  return { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChatTrackerHistory, getRecentChatTrackers };
+}
+
+// src/trackerLegacyMigration.ts
+function createLegacyTrackerNormalizer(deps) {
+  return async function normalizeLegacyTrackersInChat(chatId, scanTail = Number.MAX_SAFE_INTEGER) {
+    const messages = await deps.getMessages(chatId);
+    if (!deps.hasChatMutationPermission())
+      return messages;
+    const startIdx = Math.max(0, messages.length - Math.max(0, scanTail));
+    let repairedMessages = 0;
+    let repairedBlocks = 0;
+    for (let i = startIdx;i < messages.length; i += 1) {
+      const msg = messages[i];
+      const normalizedContent = deps.normalizeLegacyHiddenDivTrackers(msg.content);
+      const normalizedSwipes = msg.swipes.map((swipe) => deps.normalizeLegacyHiddenDivTrackers(swipe));
+      const swipesChanged = normalizedSwipes.some((entry, idx) => entry.content !== msg.swipes[idx]);
+      const replacements = normalizedContent.replacements + normalizedSwipes.reduce((sum, entry) => sum + entry.replacements, 0);
+      if (replacements === 0)
+        continue;
+      const nextSwipes = swipesChanged ? normalizedSwipes.map((entry) => entry.content) : msg.swipes;
+      await deps.updateMessage(chatId, msg.id, {
+        content: normalizedContent.content,
+        swipes: nextSwipes,
+        skipChunkRebuild: true
+      });
+      msg.content = normalizedContent.content;
+      msg.swipes = nextSwipes;
+      if (typeof nextSwipes[msg.swipe_id] === "string") {
+        msg.content = nextSwipes[msg.swipe_id];
+      }
+      repairedMessages += 1;
+      repairedBlocks += replacements;
+    }
+    if (repairedBlocks > 0) {
+      deps.logInfo(`Normalized ${repairedBlocks} legacy hidden tracker block(s) across ${repairedMessages} message(s) in chat ${chatId}`);
+    }
+    return messages;
+  };
+}
+
+// src/conceptionRules.ts
+var CONCEPTION_CONFIG = {
+  threshold: 85,
+  autoAt: 100,
+  earlyLutealMaxDay: 19
+};
+function getCharactersFromPayload(payload) {
+  const chars = payload.characters;
+  if (!Array.isArray(chars))
+    return [];
+  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
+}
+function isFemaleOrFuta(stats) {
+  const sex = String(stats.sex || "").toLowerCase();
+  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
+}
+function isInFertileWindow(stats) {
+  const stage = String(stats.cycle_stage || "").toLowerCase();
+  const stageId = Number(stats.cycle_stage_id || 0);
+  if (stage === "ovulation" || stageId === 3)
+    return true;
+  if (stage === "rut" || stageId === 6)
+    return true;
+  if (stage === "luteal" || stageId === 4) {
+    const day = Number(stats.cycle_day || 0);
+    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
+  }
+  return false;
+}
+function extractCurrentDate(payload) {
+  const world = payload.worldData;
+  const date = world?.current_date;
+  if (typeof date === "string" && date.trim())
+    return date.trim();
+  return new Date().toISOString().slice(0, 10);
+}
+function isAlreadyConceivedOrPregnant(stats) {
+  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
+}
+function coinFlip() {
+  return Math.random() < 0.5;
+}
+
+// src/conceptionFlow.ts
+function latestNarrativeBeat(messages) {
+  for (let i = messages.length - 1;i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!msg || msg.role !== "user" || typeof msg.content !== "string" || !msg.content.trim())
+      continue;
+    return msg.content;
+  }
+  return "";
+}
+function planForcedConception(history, names, conceptionDate) {
+  if (names.length === 0 || history.length === 0)
+    return null;
+  const latest = history[history.length - 1];
+  const parsed = parseTrackerPayload(latest.payload);
+  if (!parsed)
+    return null;
+  const characters = getCharactersFromPayload(parsed);
+  let mutated = false;
+  for (const char of characters) {
+    if (typeof char.name !== "string" || !names.includes(char.name))
+      continue;
+    if (char.preg === true || char.conceived === true)
+      continue;
+    char.conceived = true;
+    if (typeof char.conception_date !== "string" || !char.conception_date.trim()) {
+      char.conception_date = conceptionDate;
+    }
+    mutated = true;
+  }
+  if (!mutated)
+    return null;
+  const newPayload = JSON.stringify(parsed, null, 2);
+  return { messageId: latest.messageId, oldPayload: latest.payload, newPayload };
+}
+function rewriteTrackerInMessages(messages, oldPayload, newPayload, extractTrackerPayloadFromMessage) {
+  const oldTrim = oldPayload.trim();
+  if (!oldTrim || oldTrim === newPayload.trim())
+    return;
+  for (let i = 0;i < messages.length; i += 1) {
+    const msg = messages[i];
+    if (!msg || typeof msg.content !== "string")
+      continue;
+    const found = extractTrackerPayloadFromMessage(msg.content);
+    if (!found || found.trim() !== oldTrim)
+      continue;
+    messages[i] = { ...msg, content: msg.content.replace(oldPayload, newPayload) };
+  }
+}
+function buildConceptionDirective(names) {
+  if (names.length === 0)
+    return "";
+  const subject = names.length === 1 ? names[0] : names.join(", ");
+  const verb = names.length === 1 ? "has" : "have";
+  const pronoun = names.length === 1 ? "her" : "them";
+  return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
+}
+
 // src/secondaryPromptText.ts
 function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
   if (!base)
@@ -13821,49 +14058,6 @@ function readMessageContext(payload) {
     messageId: messageId || null,
     content
   };
-}
-
-// src/conceptionRules.ts
-var CONCEPTION_CONFIG = {
-  threshold: 85,
-  autoAt: 100,
-  earlyLutealMaxDay: 19
-};
-function getCharactersFromPayload(payload) {
-  const chars = payload.characters;
-  if (!Array.isArray(chars))
-    return [];
-  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
-}
-function isFemaleOrFuta(stats) {
-  const sex = String(stats.sex || "").toLowerCase();
-  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
-}
-function isInFertileWindow(stats) {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  if (stage === "ovulation" || stageId === 3)
-    return true;
-  if (stage === "rut" || stageId === 6)
-    return true;
-  if (stage === "luteal" || stageId === 4) {
-    const day = Number(stats.cycle_day || 0);
-    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
-  }
-  return false;
-}
-function extractCurrentDate(payload) {
-  const world = payload.worldData;
-  const date = world?.current_date;
-  if (typeof date === "string" && date.trim())
-    return date.trim();
-  return new Date().toISOString().slice(0, 10);
-}
-function isAlreadyConceivedOrPregnant(stats) {
-  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
-}
-function coinFlip() {
-  return Math.random() < 0.5;
 }
 
 // src/trackerData.ts
@@ -14266,8 +14460,6 @@ var loadedConfigUserId = null;
 var activeSimTrackerMacroContent = "";
 var firstMessageFertilityHint = "";
 var activeChatId = null;
-var chatTrackerHistory = new Map;
-var rehydratedChats = new Set;
 var conceptionNotified = new Set;
 var runtime = {
   grantedPermissions: new Set,
@@ -14282,6 +14474,18 @@ function getActivePreset() {
 }
 var trackerMessageCodec = createTrackerMessageCodec(() => config);
 var { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload } = trackerMessageCodec;
+var normalizeLegacyTrackersInChat = createLegacyTrackerNormalizer({
+  getMessages: (chatId) => spindle.chat.getMessages(chatId),
+  updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
+  hasChatMutationPermission: () => hasPermission("chat_mutation"),
+  normalizeLegacyHiddenDivTrackers,
+  logInfo: (message) => spindle.log.info(message)
+});
+var { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChatTrackerHistory, getRecentChatTrackers } = createTrackerHistory({
+  normalizeLegacyTrackersInChat,
+  extractTrackerPayloadFromMessage,
+  readRetainCount: () => config.retainTrackerCount
+});
 function hasPermission(name) {
   return runtime.grantedPermissions.has(name);
 }
@@ -14291,130 +14495,6 @@ async function trackEvent(eventName, payload, options) {
   try {
     await spindle.events.track(eventName, payload, options);
   } catch {}
-}
-function recordChatTracker(chatId, messageId, payload) {
-  if (!chatId || !messageId)
-    return;
-  const trimmed = payload.trim();
-  if (!trimmed)
-    return;
-  let history = chatTrackerHistory.get(chatId);
-  if (!history) {
-    history = [];
-    chatTrackerHistory.set(chatId, history);
-  }
-  const existingIdx = history.findIndex((entry) => entry.messageId === messageId);
-  if (existingIdx >= 0) {
-    history[existingIdx] = { messageId, payload: trimmed };
-  } else {
-    history.push({ messageId, payload: trimmed });
-  }
-}
-function forgetChatTracker(chatId, messageId) {
-  if (!chatId || !messageId)
-    return;
-  const history = chatTrackerHistory.get(chatId);
-  if (!history)
-    return;
-  const idx = history.findIndex((entry) => entry.messageId === messageId);
-  if (idx >= 0)
-    history.splice(idx, 1);
-}
-function getChatTrackerHistory(chatId) {
-  if (!chatId)
-    return [];
-  return chatTrackerHistory.get(chatId) || [];
-}
-async function normalizeLegacyTrackersInChat(chatId, scanTail = Number.MAX_SAFE_INTEGER) {
-  const messages = await spindle.chat.getMessages(chatId);
-  if (!hasPermission("chat_mutation"))
-    return messages;
-  const startIdx = Math.max(0, messages.length - Math.max(0, scanTail));
-  let repairedMessages = 0;
-  let repairedBlocks = 0;
-  for (let i = startIdx;i < messages.length; i += 1) {
-    const msg = messages[i];
-    const normalizedContent = normalizeLegacyHiddenDivTrackers(msg.content);
-    const normalizedSwipes = msg.swipes.map((swipe) => normalizeLegacyHiddenDivTrackers(swipe));
-    const swipesChanged = normalizedSwipes.some((entry, idx) => entry.content !== msg.swipes[idx]);
-    const replacements = normalizedContent.replacements + normalizedSwipes.reduce((sum, entry) => sum + entry.replacements, 0);
-    if (replacements === 0)
-      continue;
-    const nextSwipes = swipesChanged ? normalizedSwipes.map((entry) => entry.content) : msg.swipes;
-    await spindle.chat.updateMessage(chatId, msg.id, {
-      content: normalizedContent.content,
-      swipes: nextSwipes,
-      skipChunkRebuild: true
-    });
-    msg.content = normalizedContent.content;
-    msg.swipes = nextSwipes;
-    if (typeof nextSwipes[msg.swipe_id] === "string") {
-      msg.content = nextSwipes[msg.swipe_id];
-    }
-    repairedMessages += 1;
-    repairedBlocks += replacements;
-  }
-  if (repairedBlocks > 0) {
-    spindle.log.info(`Normalized ${repairedBlocks} legacy hidden tracker block(s) across ${repairedMessages} message(s) in chat ${chatId}`);
-  }
-  return messages;
-}
-async function rehydrateChatTrackerHistory(chatId) {
-  if (!chatId)
-    return;
-  if (rehydratedChats.has(chatId))
-    return;
-  try {
-    const retainSetting = Number.isFinite(config.retainTrackerCount) ? config.retainTrackerCount : DEFAULT_CONFIG.retainTrackerCount;
-    const historyLimit = Math.max(3, Math.min(20, retainSetting + 2));
-    const scanTail = Math.max(200, historyLimit * 5);
-    const messages = await normalizeLegacyTrackersInChat(chatId, scanTail);
-    rehydratedChats.add(chatId);
-    let history = chatTrackerHistory.get(chatId);
-    if (!history) {
-      history = [];
-      chatTrackerHistory.set(chatId, history);
-    }
-    const known = new Set(history.map((entry) => entry.messageId));
-    const found = [];
-    for (let i = messages.length - 1;i >= 0 && found.length < historyLimit; i -= 1) {
-      const msg = messages[i];
-      if (known.has(msg.id))
-        continue;
-      const payload = extractTrackerPayloadFromMessage(msg.content);
-      if (payload) {
-        found.unshift({ messageId: msg.id, payload: payload.trim() });
-        known.add(msg.id);
-      }
-    }
-    if (found.length > 0) {
-      history.push(...found);
-    }
-    const order = new Map;
-    messages.forEach((msg, idx) => order.set(msg.id, idx));
-    history.sort((a, b) => {
-      const ai = order.get(a.messageId);
-      const bi = order.get(b.messageId);
-      if (ai === undefined && bi === undefined)
-        return 0;
-      if (ai === undefined)
-        return 1;
-      if (bi === undefined)
-        return -1;
-      return ai - bi;
-    });
-  } catch {}
-}
-function getRecentChatTrackers(chatId, limit, excludeMessageId) {
-  if (!chatId || limit <= 0)
-    return [];
-  const history = chatTrackerHistory.get(chatId);
-  if (!history || history.length === 0)
-    return [];
-  const filtered = excludeMessageId ? history.filter((entry) => entry.messageId !== excludeMessageId) : history.slice();
-  if (filtered.length <= limit)
-    return filtered;
-  return filtered.slice(filtered.length - limit);
 }
 async function checkConceptionTriggers(chatId, payload, narrative) {
   if (!chatId)
@@ -14473,73 +14553,12 @@ async function resolveGrayZoneConception(chatId, candidates, narrative) {
   }
   return candidates.filter(() => coinFlip()).map((c) => c.name);
 }
-function latestNarrativeBeat(messages) {
-  for (let i = messages.length - 1;i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (!msg || msg.role !== "user" || typeof msg.content !== "string" || !msg.content.trim())
-      continue;
-    return msg.content;
-  }
-  return "";
-}
-function planForcedConception(chatId, names, conceptionDate) {
-  if (!chatId || names.length === 0)
-    return null;
-  const history = chatTrackerHistory.get(chatId);
-  if (!history || history.length === 0)
-    return null;
-  const latest = history[history.length - 1];
-  const parsed = parseTrackerPayload(latest.payload);
-  if (!parsed)
-    return null;
-  const characters = getCharactersFromPayload(parsed);
-  let mutated = false;
-  for (const char of characters) {
-    if (typeof char.name !== "string" || !names.includes(char.name))
-      continue;
-    if (char.preg === true || char.conceived === true)
-      continue;
-    char.conceived = true;
-    if (typeof char.conception_date !== "string" || !char.conception_date.trim()) {
-      char.conception_date = conceptionDate;
-    }
-    mutated = true;
-  }
-  if (!mutated)
-    return null;
-  const newPayload = JSON.stringify(parsed, null, 2);
-  return { messageId: latest.messageId, oldPayload: latest.payload, newPayload };
-}
 function commitForcedConception(chatId, plan) {
-  const history = chatTrackerHistory.get(chatId);
-  if (!history)
-    return;
+  const history = getChatTrackerHistory(chatId);
   const idx = history.findIndex((entry) => entry.messageId === plan.messageId);
   if (idx === -1)
     return;
   history[idx] = { ...history[idx], payload: plan.newPayload };
-}
-function rewriteTrackerInMessages(messages, oldPayload, newPayload) {
-  const oldTrim = oldPayload.trim();
-  if (!oldTrim || oldTrim === newPayload.trim())
-    return;
-  for (let i = 0;i < messages.length; i += 1) {
-    const msg = messages[i];
-    if (!msg || typeof msg.content !== "string")
-      continue;
-    const found = extractTrackerPayloadFromMessage(msg.content);
-    if (!found || found.trim() !== oldTrim)
-      continue;
-    messages[i] = { ...msg, content: msg.content.replace(oldPayload, newPayload) };
-  }
-}
-function buildConceptionDirective(names) {
-  if (names.length === 0)
-    return "";
-  const subject = names.length === 1 ? names[0] : names.join(", ");
-  const verb = names.length === 1 ? "has" : "have";
-  const pronoun = names.length === 1 ? "her" : "them";
-  return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
 }
 function buildTemplateExampleData2() {
   return buildTemplateExampleData(getActivePreset());
@@ -15416,10 +15435,10 @@ function tryRegisterInterceptor() {
         if (latestPayload) {
           const conceptionNames = await checkConceptionTriggers(chatId, latestPayload, latestNarrativeBeat(retained));
           if (conceptionNames.length > 0) {
-            const plan = planForcedConception(chatId, conceptionNames, extractCurrentDate(latestPayload));
+            const plan = planForcedConception(getChatTrackerHistory(chatId), conceptionNames, extractCurrentDate(latestPayload));
             if (plan) {
               commitForcedConception(chatId, plan);
-              rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload);
+              rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload, extractTrackerPayloadFromMessage);
             }
             conceptionDirective = buildConceptionDirective(conceptionNames);
           }

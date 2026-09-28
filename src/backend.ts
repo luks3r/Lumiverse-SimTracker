@@ -8,6 +8,9 @@ import { mergeTrackerConfig, normalizeStoredConfig } from "./backendConfig";
 import { buildTrackerFenceRegex, buildTrackerTagRegex, escapeRegex, extractSimBlock, extractTrackerTag, extractTrackerTagLoose, parseTagAttributes, sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
 import { createTrackerMessageCodec } from "./trackerMessageCodec";
 import { createTrackerPromptRetention } from "./trackerPromptRetention";
+import { createTrackerHistory } from "./trackerHistory";
+import { createLegacyTrackerNormalizer } from "./trackerLegacyMigration";
+import { buildConceptionDirective, latestNarrativeBeat, planForcedConception, rewriteTrackerInMessages, type ConceptionMutation } from "./conceptionFlow";
 import { sanitizeSysPromptForWireFormat, stripStructuralHTML } from "./secondaryPromptText";
 import { sanitizeInlinePacks, sanitizePresetArray, sanitizeSinglePreset } from "./presetSanitizers";
 import { readMessageContext, type MessageContext } from "./backendMessageContext";
@@ -65,21 +68,6 @@ let firstMessageFertilityHint = "";
  */
 let activeChatId: string | null = null;
 
-type TrackerHistoryEntry = { messageId: string; payload: string };
-
-/**
- * Per-chat ordered history of tracker payloads, keyed by chat id. The list is
- * ordered oldest → newest. Entries are appended when a tracker tag is first
- * seen in a message, and upserted when a message is edited. This is a
- * side-channel that survives `registerTagInterceptor`'s `removeFromMessage`
- * behaviour — the frontend asks Lumiverse to remove the tracker tag from the
- * displayed/canonical message so users don't see raw JSON, but by capturing
- * the content via `MESSAGE_TAG_INTERCEPTED` we retain a complete history that
- * can still be referenced by the main and secondary LLM generation flows.
- */
-const chatTrackerHistory = new Map<string, TrackerHistoryEntry[]>();
-const rehydratedChats = new Set<string>();
-
 /**
  * Tracks which (chatId, characterName) pairs have already received a
  * conception notice so we don't spam the same directive repeatedly.
@@ -114,6 +102,18 @@ function getActivePreset(): TemplatePreset {
 
 const trackerMessageCodec = createTrackerMessageCodec(() => config);
 const { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload } = trackerMessageCodec;
+const normalizeLegacyTrackersInChat = createLegacyTrackerNormalizer({
+  getMessages: (chatId) => spindle.chat.getMessages(chatId),
+  updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
+  hasChatMutationPermission: () => hasPermission("chat_mutation"),
+  normalizeLegacyHiddenDivTrackers,
+  logInfo: (message) => spindle.log.info(message),
+});
+const { recordChatTracker, forgetChatTracker, getChatTrackerHistory, rehydrateChatTrackerHistory, getRecentChatTrackers } = createTrackerHistory({
+  normalizeLegacyTrackersInChat,
+  extractTrackerPayloadFromMessage,
+  readRetainCount: () => config.retainTrackerCount,
+});
 
 function hasPermission(name: string): boolean {
   return runtime.grantedPermissions.has(name);
@@ -144,180 +144,6 @@ async function trackEvent(
 //   3. rehydrateChatTrackerHistory — initial scan of the current chat
 //      on demand, so history is populated even for chats the extension
 //      wasn't active in when the message was originally generated.
-
-function recordChatTracker(chatId: string | null, messageId: string | null, payload: string): void {
-  if (!chatId || !messageId) return;
-  const trimmed = payload.trim();
-  if (!trimmed) return;
-  let history = chatTrackerHistory.get(chatId);
-  if (!history) {
-    history = [];
-    chatTrackerHistory.set(chatId, history);
-  }
-  const existingIdx = history.findIndex((entry) => entry.messageId === messageId);
-  if (existingIdx >= 0) {
-    history[existingIdx] = { messageId, payload: trimmed };
-  } else {
-    history.push({ messageId, payload: trimmed });
-  }
-}
-
-function forgetChatTracker(chatId: string | null, messageId: string | null): void {
-  if (!chatId || !messageId) return;
-  const history = chatTrackerHistory.get(chatId);
-  if (!history) return;
-  const idx = history.findIndex((entry) => entry.messageId === messageId);
-  if (idx >= 0) history.splice(idx, 1);
-}
-
-function getChatTrackerHistory(chatId: string | null): TrackerHistoryEntry[] {
-  if (!chatId) return [];
-  return chatTrackerHistory.get(chatId) || [];
-}
-
-async function normalizeLegacyTrackersInChat(
-  chatId: string,
-  scanTail = Number.MAX_SAFE_INTEGER,
-): Promise<Array<{
-  id: string;
-  role: "system" | "user" | "assistant";
-  content: string;
-  extra: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  swipe_id: number;
-  swipes: string[];
-  swipe_dates: number[];
-}>> {
-  const messages = await spindle.chat.getMessages(chatId);
-  if (!hasPermission("chat_mutation")) return messages;
-
-  // Legacy hidden-div trackers only matter for messages that could still
-  // influence current context. Scanning the whole history on every page
-  // reload is expensive, so we cap the normalization pass to the recent
-  // tail. Callers that need full-history migration can pass a larger tail.
-  const startIdx = Math.max(0, messages.length - Math.max(0, scanTail));
-  let repairedMessages = 0;
-  let repairedBlocks = 0;
-
-  for (let i = startIdx; i < messages.length; i += 1) {
-    const msg = messages[i];
-    const normalizedContent = normalizeLegacyHiddenDivTrackers(msg.content);
-    const normalizedSwipes = msg.swipes.map((swipe) => normalizeLegacyHiddenDivTrackers(swipe));
-    const swipesChanged = normalizedSwipes.some((entry, idx) => entry.content !== msg.swipes[idx]);
-    const replacements = normalizedContent.replacements
-      + normalizedSwipes.reduce((sum, entry) => sum + entry.replacements, 0);
-
-    if (replacements === 0) continue;
-
-    const nextSwipes = swipesChanged ? normalizedSwipes.map((entry) => entry.content) : msg.swipes;
-    await spindle.chat.updateMessage(chatId, msg.id, {
-      content: normalizedContent.content,
-      swipes: nextSwipes,
-      skipChunkRebuild: true,
-    } as {
-      content?: string;
-      swipes?: string[];
-      skipChunkRebuild?: boolean;
-    });
-
-    msg.content = normalizedContent.content;
-    msg.swipes = nextSwipes;
-    if (typeof nextSwipes[msg.swipe_id] === "string") {
-      msg.content = nextSwipes[msg.swipe_id] as string;
-    }
-
-    repairedMessages += 1;
-    repairedBlocks += replacements;
-  }
-
-  if (repairedBlocks > 0) {
-    spindle.log.info(
-      `Normalized ${repairedBlocks} legacy hidden tracker block(s) across ${repairedMessages} message(s) in chat ${chatId}`,
-    );
-  }
-
-  return messages;
-}
-
-async function rehydrateChatTrackerHistory(chatId: string | null): Promise<void> {
-  if (!chatId) return;
-  // Once a chat has been hydrated, MESSAGE_* subscriptions keep this
-  // side-channel current. Avoid pulling and normalizing the entire chat again
-  // just to answer a lightweight "latest tracker" poll on navigation.
-  if (rehydratedChats.has(chatId)) return;
-  try {
-    // The side-channel only needs enough recent trackers to satisfy the
-    // user's retention setting plus a small buffer for the side panel and
-    // secondary LLM fallback. There is no need to scan the entire chat
-    // history on every page reload.
-    const retainSetting = Number.isFinite(config.retainTrackerCount)
-      ? config.retainTrackerCount
-      : DEFAULT_CONFIG.retainTrackerCount;
-    const historyLimit = Math.max(3, Math.min(20, retainSetting + 2));
-    const scanTail = Math.max(200, historyLimit * 5);
-
-    const messages = await normalizeLegacyTrackersInChat(chatId, scanTail);
-    rehydratedChats.add(chatId);
-
-    let history = chatTrackerHistory.get(chatId);
-    if (!history) {
-      history = [];
-      chatTrackerHistory.set(chatId, history);
-    }
-    const known = new Set(history.map((entry) => entry.messageId));
-
-    // Scan newest → oldest, collecting only the trackers we actually need.
-    const found: TrackerHistoryEntry[] = [];
-    for (let i = messages.length - 1; i >= 0 && found.length < historyLimit; i -= 1) {
-      const msg = messages[i];
-      if (known.has(msg.id)) continue;
-      const payload = extractTrackerPayloadFromMessage(msg.content);
-      if (payload) {
-        found.unshift({ messageId: msg.id, payload: payload.trim() });
-        known.add(msg.id);
-      }
-    }
-
-    if (found.length > 0) {
-      history.push(...found);
-    }
-
-    // Re-sort entries to match current chat order where possible.
-    const order = new Map<string, number>();
-    messages.forEach((msg, idx) => order.set(msg.id, idx));
-    history.sort((a, b) => {
-      const ai = order.get(a.messageId);
-      const bi = order.get(b.messageId);
-      if (ai === undefined && bi === undefined) return 0;
-      if (ai === undefined) return 1;
-      if (bi === undefined) return -1;
-      return ai - bi;
-    });
-  } catch {
-    // Rehydration is best-effort.
-  }
-}
-
-/**
- * Return the `limit` most recent tracker entries for a chat, optionally
- * excluding the target message id (used when searching for *prior*
- * trackers relative to an in-progress generation target). Results are
- * returned oldest → newest so callers can present a progression.
- */
-function getRecentChatTrackers(
-  chatId: string | null,
-  limit: number,
-  excludeMessageId?: string | null,
-): TrackerHistoryEntry[] {
-  if (!chatId || limit <= 0) return [];
-  const history = chatTrackerHistory.get(chatId);
-  if (!history || history.length === 0) return [];
-  const filtered = excludeMessageId
-    ? history.filter((entry) => entry.messageId !== excludeMessageId)
-    : history.slice();
-  if (filtered.length <= limit) return filtered;
-  return filtered.slice(filtered.length - limit);
-}
 
 /**
  * Inspect the most recent tracker payload for a chat and decide whether
@@ -421,107 +247,11 @@ async function resolveGrayZoneConception(
   return candidates.filter(() => coinFlip()).map((c) => c.name);
 }
 
-/**
- * Freshest scene beat for the conception gate: the last non-empty user
- * message in the in-flight prompt (that message is what the current scene
- * is responding to).
- */
-function latestNarrativeBeat(messages: Array<{ role?: unknown; content?: unknown }>): string {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (!msg || msg.role !== "user" || typeof msg.content !== "string" || !msg.content.trim()) continue;
-    return msg.content;
-  }
-  return "";
-}
-
-type ConceptionMutation = {
-  messageId: string;
-  oldPayload: string;
-  newPayload: string;
-};
-
-/**
- * Build a forced-conception mutation plan against the most recent stored
- * tracker payload.  Returns the old/new payload pair (and source message
- * ID) when the named characters would actually flip to `conceived: true`,
- * or null when there's nothing to do.  The caller is responsible for
- * committing the mutation to history and rewriting any in-flight LLM
- * context to match.
- */
-function planForcedConception(
-  chatId: string | null,
-  names: string[],
-  conceptionDate: string,
-): ConceptionMutation | null {
-  if (!chatId || names.length === 0) return null;
-  const history = chatTrackerHistory.get(chatId);
-  if (!history || history.length === 0) return null;
-  const latest = history[history.length - 1];
-  const parsed = parseTrackerPayload(latest.payload);
-  if (!parsed) return null;
-
-  const characters = getCharactersFromPayload(parsed as Record<string, unknown>);
-  let mutated = false;
-
-  for (const char of characters) {
-    if (typeof char.name !== "string" || !names.includes(char.name)) continue;
-    if (char.preg === true || char.conceived === true) continue;
-    char.conceived = true;
-    if (typeof char.conception_date !== "string" || !char.conception_date.trim()) {
-      char.conception_date = conceptionDate;
-    }
-    mutated = true;
-  }
-
-  if (!mutated) return null;
-
-  const newPayload = JSON.stringify(parsed, null, 2);
-  return { messageId: latest.messageId, oldPayload: latest.payload, newPayload };
-}
-
 function commitForcedConception(chatId: string, plan: ConceptionMutation): void {
-  const history = chatTrackerHistory.get(chatId);
-  if (!history) return;
+  const history = getChatTrackerHistory(chatId);
   const idx = history.findIndex((entry) => entry.messageId === plan.messageId);
   if (idx === -1) return;
   history[idx] = { ...history[idx], payload: plan.newPayload };
-}
-
-/**
- * Rewrite any retained message whose visible tracker payload matches
- * `oldPayload` so it carries `newPayload` instead. Preserves the
- * surrounding tag/fence wrapper. Operates on the interceptor's in-memory
- * messages array; does not touch persisted chat state.
- */
-function rewriteTrackerInMessages(
-  messages: Array<{ content?: unknown }>,
-  oldPayload: string,
-  newPayload: string,
-): void {
-  const oldTrim = oldPayload.trim();
-  if (!oldTrim || oldTrim === newPayload.trim()) return;
-  for (let i = 0; i < messages.length; i += 1) {
-    const msg = messages[i];
-    if (!msg || typeof msg.content !== "string") continue;
-    const found = extractTrackerPayloadFromMessage(msg.content);
-    if (!found || found.trim() !== oldTrim) continue;
-    messages[i] = { ...msg, content: msg.content.replace(oldPayload, newPayload) };
-  }
-}
-
-/**
- * Build a concise system-message directive that tells the LLM which
- * characters have had their seed take root.  The LLM is expected to
- * respond by setting `conceived: true` (and optionally `conception_date`)
- * on the next tracker emission.
- */
-function buildConceptionDirective(names: string[]): string {
-  if (names.length === 0) return "";
-  const subject = names.length === 1 ? names[0] : names.join(", ");
-  const verb = names.length === 1 ? "has" : "have";
-  const pronoun = names.length === 1 ? "her" : "them";
-  return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this — \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
 }
 
 const CERVIX_STATE_BY_ID: Record<number, string> = {
@@ -1806,10 +1536,10 @@ function tryRegisterInterceptor(): void {
         if (latestPayload) {
           const conceptionNames = await checkConceptionTriggers(chatId, latestPayload, latestNarrativeBeat(retained));
           if (conceptionNames.length > 0) {
-            const plan = planForcedConception(chatId, conceptionNames, extractCurrentDate(latestPayload));
+            const plan = planForcedConception(getChatTrackerHistory(chatId), conceptionNames, extractCurrentDate(latestPayload));
             if (plan) {
               commitForcedConception(chatId, plan);
-              rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload);
+              rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload, extractTrackerPayloadFromMessage);
             }
             conceptionDirective = buildConceptionDirective(conceptionNames);
           }

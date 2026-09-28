@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-type ChatMessage = { id: string; role: "system" | "user" | "assistant"; content: string };
+type ChatMessage = { id: string; role: "system" | "user" | "assistant"; content: string; swipes?: string[]; swipe_id?: number };
 type FrontendMessage = Record<string, unknown>;
 
 const handlers = new Map<string, (payload: unknown, userId?: string) => void>();
@@ -36,9 +36,10 @@ const spindle = {
   connections: { list: async () => [] },
   chat: {
     getMessages: async (chatId: string) => chats.get(chatId) ?? [],
-    updateMessage: async (chatId: string, messageId: string, change: { content: string }) => {
+    updateMessage: async (chatId: string, messageId: string, change: { content?: string; swipes?: string[] }) => {
       const target = chats.get(chatId)?.find((message) => message.id === messageId);
-      if (target) target.content = change.content;
+      if (target && change.content !== undefined) target.content = change.content;
+      if (target && change.swipes !== undefined) target.swipes = change.swipes;
     },
   },
 };
@@ -153,6 +154,56 @@ describe("backend host flows", () => {
     expect(chats.get(chatId)?.[0].content).toContain("hp: 7");
   });
 
+  test("latest tracker lookup rehydrates ordered history from chat messages", async () => {
+    await sendFrontend({ type: "get_config" });
+    const chatId = "history-hydrate-chat";
+    const first = '<tracker type="sim">{"turn":1}</tracker>';
+    const second = '<tracker type="sim">{"turn":2}</tracker>';
+    chats.set(chatId, [
+      { id: "assistant-1", role: "assistant", content: first, swipes: [first], swipe_id: 0 },
+      { id: "assistant-2", role: "assistant", content: second, swipes: [second], swipe_id: 0 },
+    ]);
+    const notifications = await sendFrontend({ type: "get_latest_tracker", chatId });
+    expect(notifications.find((message) => message.type === "tracker_history_latest")).toMatchObject({
+      chatId,
+      entry: { messageId: "assistant-2", payload: '{"turn":2}', previousPayload: '{"turn":1}' },
+    });
+  });
+
+  test("intercepted and edited trackers update latest history", async () => {
+    await sendFrontend({ type: "get_config" });
+    const chatId = "history-events-chat";
+    chats.set(chatId, []);
+    await sendFrontend({ type: "get_latest_tracker", chatId });
+
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId, messageId: "assistant-1", tagName: "tracker", attrs: { type: "sim" }, content: '{"turn":1}', isStreaming: false,
+    }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const recorded = await sendFrontend({ type: "get_latest_tracker", chatId });
+    expect(recorded.find((message) => message.type === "tracker_history_latest")).toMatchObject({
+      entry: { messageId: "assistant-1", payload: '{"turn":1}', previousPayload: null },
+    });
+
+    handlers.get("MESSAGE_EDITED")?.({ chatId, messageId: "assistant-1", content: "Tracker removed" }, "flow-user");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const removed = await sendFrontend({ type: "get_latest_tracker", chatId });
+    expect(removed.find((message) => message.type === "tracker_history_latest")).toMatchObject({ chatId, entry: null });
+  });
+
+  test("latest tracker lookup migrates a legacy hidden block in content and swipes", async () => {
+    await sendFrontend({ type: "get_config" });
+    const chatId = "history-legacy-chat";
+    const legacy = '<div style="display:none"><pre>```sim\n{"turn":4}\n```</pre></div>';
+    chats.set(chatId, [{ id: "assistant-1", role: "assistant", content: legacy, swipes: [legacy], swipe_id: 0 }]);
+    const notifications = await sendFrontend({ type: "get_latest_tracker", chatId });
+    expect(notifications.find((message) => message.type === "tracker_history_latest")).toMatchObject({
+      entry: { messageId: "assistant-1", payload: '{"turn":4}' },
+    });
+    expect(chats.get(chatId)?.[0].content).toBe('<tracker type="sim">\n{"turn":4}\n</tracker>');
+    expect(chats.get(chatId)?.[0].swipes?.[0]).toBe('<tracker type="sim">\n{"turn":4}\n</tracker>');
+  });
+
   test("interceptor retains newest tracker and strips older one", async () => {
     await sendFrontend({ type: "set_config", config: { retainTrackerCount: 1 } });
     permissionChanged?.({ permission: "interceptor", granted: true, allGranted: ["interceptor", "generation", "chat_mutation"] });
@@ -165,5 +216,27 @@ describe("backend host flows", () => {
     ], { chatId: "retention-chat" });
     expect(output.map((message) => message.content).join("\n")).not.toContain("turn: 1");
     expect(output.map((message) => message.content).join("\n")).toContain("turn: 2");
+  });
+
+  test("interceptor commits a deterministic conception and injects its directive", async () => {
+    await sendFrontend({ type: "set_config", config: { retainTrackerCount: 1, trackerFormat: "json" } });
+    permissionChanged?.({ permission: "interceptor", granted: true, allGranted: ["interceptor", "generation", "chat_mutation"] });
+    if (!interceptor) throw new Error("Interceptor missing");
+    const chatId = "conception-chat";
+    const payload = JSON.stringify({
+      worldData: { current_date: "2026-09-28" },
+      characters: [{ name: "Alice", sex: "female", cycle_stage_id: 3, womb_fullness_pct: 100, conceived: false }],
+    });
+    const content = `<tracker type="sim">${payload}</tracker>`;
+    chats.set(chatId, [{ id: "assistant-1", role: "assistant", content, swipes: [content], swipe_id: 0 }]);
+
+    const output = await interceptor([
+      { role: "assistant", content },
+      { role: "user", content: "Continue the scene" },
+    ], { chatId });
+    expect(output.map((message) => message.content).join("\n")).toContain("CONCEPTION DIRECTIVE: Alice has conceived.");
+    const latest = await sendFrontend({ type: "get_latest_tracker", chatId });
+    const entry = latest.find((message) => message.type === "tracker_history_latest")?.entry as FrontendMessage;
+    expect(JSON.parse(String(entry.payload)).characters[0]).toMatchObject({ conceived: true, conception_date: "2026-09-28" });
   });
 });
