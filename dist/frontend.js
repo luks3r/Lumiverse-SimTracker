@@ -19603,7 +19603,7 @@ function createInlineTemplateProcessor(deps) {
   return { processMessage, processAll, clearMessage, observeDocument, destroy };
 }
 
-// src/frontend.ts
+// src/trackerConfig.ts
 var FERTILITY_CYCLE_BIAS_VALUES = [
   "random",
   "menstruating",
@@ -19638,6 +19638,89 @@ var DEFAULT_CONFIG = {
   typeSafeConception: true,
   typeSafeConfidenceFloor: 0.6
 };
+
+// src/frontendMessageSyntax.ts
+function sanitizeIdentifier(value) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "sim";
+}
+function sanitizeTagName(value) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "tracker";
+}
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function parseTagAttrs(raw) {
+  const out = {};
+  const attrRe = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let match;
+  while ((match = attrRe.exec(raw)) !== null) {
+    const key = match[1];
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    out[key] = value;
+  }
+  return out;
+}
+function createFrontendMessageSyntax(readTagName) {
+  function extractTrackerBlock(content, identifier) {
+    const tagName = sanitizeTagName(readTagName() || "tracker");
+    const tagRe = new RegExp(String.raw`<${escapeRegex(tagName)}\b([^>]*)>([\s\S]*?)<\/${escapeRegex(tagName)}>`, "ig");
+    const cleanIdentifier = sanitizeIdentifier(identifier);
+    let tagMatch;
+    while ((tagMatch = tagRe.exec(content)) !== null) {
+      const attrsRaw = tagMatch[1] || "";
+      const attrs = parseTagAttrs(attrsRaw);
+      const foundType = sanitizeIdentifier(attrs.type || "");
+      if (foundType && foundType !== cleanIdentifier)
+        continue;
+      return tagMatch[2]?.trim() || null;
+    }
+    if (!cleanIdentifier)
+      return null;
+    const id = escapeRegex(cleanIdentifier);
+    const re = new RegExp(String.raw`(?:^|\n)\s*\`\`\`[ \t]*${id}(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*\`\`\``, "i");
+    return content.match(re)?.[1]?.trim() || null;
+  }
+  return { extractTrackerBlock };
+}
+function readMessageContext(payload) {
+  if (!payload || typeof payload !== "object")
+    return null;
+  const value = payload;
+  const messageIdCandidate = typeof value.messageId === "string" ? value.messageId : typeof value.message_id === "string" ? value.message_id : null;
+  if (typeof value.content === "string") {
+    return {
+      content: value.content,
+      messageId: messageIdCandidate,
+      isUser: typeof value.is_user === "boolean" ? value.is_user : null
+    };
+  }
+  const nested = value.message;
+  return {
+    content: typeof nested?.content === "string" ? nested.content : null,
+    messageId: typeof nested?.id === "string" ? nested.id : typeof nested?.messageId === "string" ? nested.messageId : messageIdCandidate,
+    isUser: typeof nested?.is_user === "boolean" ? nested.is_user : null
+  };
+}
+
+// src/trackerSyntax.ts
+function sanitizeIdentifier2(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.codeBlockIdentifier;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed)
+    return DEFAULT_CONFIG.codeBlockIdentifier;
+  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.codeBlockIdentifier;
+}
+function sanitizeTagName2(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.trackerTagName;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed)
+    return DEFAULT_CONFIG.trackerTagName;
+  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
+}
+
+// src/frontend.ts
 var BUILTIN_PRESETS = getTemplatePresets();
 var runtimeSeededPresets = [];
 var panelRoot = null;
@@ -19646,12 +19729,6 @@ function byId(id) {
   if (scoped)
     return scoped;
   return document.getElementById(id);
-}
-function sanitizeIdentifier(value) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "sim";
-}
-function sanitizeTagName(value) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "tracker";
 }
 function sanitizeRetainCount(value) {
   const num = Number(value);
@@ -19672,59 +19749,8 @@ function getAllPresets(config) {
 function getPresetById(config, id) {
   return getAllPresets(config).find((preset) => preset.id === id) || BUILTIN_PRESETS[0];
 }
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function extractTrackerBlock(content, identifier) {
-  const tagName = sanitizeTagName(configTrackerTagNameHint || "tracker");
-  const tagRe = new RegExp(String.raw`<${escapeRegex(tagName)}\b([^>]*)>([\s\S]*?)<\/${escapeRegex(tagName)}>`, "ig");
-  const cleanIdentifier = sanitizeIdentifier(identifier);
-  let tagMatch;
-  while ((tagMatch = tagRe.exec(content)) !== null) {
-    const attrsRaw = tagMatch[1] || "";
-    const attrs = parseTagAttrs(attrsRaw);
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== cleanIdentifier)
-      continue;
-    return tagMatch[2]?.trim() || null;
-  }
-  if (!cleanIdentifier)
-    return null;
-  const id = escapeRegex(cleanIdentifier);
-  const re = new RegExp(String.raw`(?:^|\n)\s*\`\`\`[ \t]*${id}(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*\`\`\``, "i");
-  return content.match(re)?.[1]?.trim() || null;
-}
-function parseTagAttrs(raw) {
-  const out = {};
-  const attrRe = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-  let match;
-  while ((match = attrRe.exec(raw)) !== null) {
-    const key = match[1];
-    const value = match[2] ?? match[3] ?? match[4] ?? "";
-    out[key] = value;
-  }
-  return out;
-}
 var configTrackerTagNameHint = "tracker";
-function readMessageContext(payload) {
-  if (!payload || typeof payload !== "object")
-    return null;
-  const value = payload;
-  const messageIdCandidate = typeof value.messageId === "string" ? value.messageId : typeof value.message_id === "string" ? value.message_id : null;
-  if (typeof value.content === "string") {
-    return {
-      content: value.content,
-      messageId: messageIdCandidate,
-      isUser: typeof value.is_user === "boolean" ? value.is_user : null
-    };
-  }
-  const nested = value.message;
-  return {
-    content: typeof nested?.content === "string" ? nested.content : null,
-    messageId: typeof nested?.id === "string" ? nested.id : typeof nested?.messageId === "string" ? nested.messageId : messageIdCandidate,
-    isUser: typeof nested?.is_user === "boolean" ? nested.is_user : null
-  };
-}
+var { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
 function setStatus(text) {
   const el = byId("sst-lumi-status");
   if (el)
@@ -20488,8 +20514,8 @@ function setup(ctx) {
     if (obj?.type === "tag_interceptor_config") {
       config = {
         ...config,
-        trackerTagName: typeof obj.tagName === "string" ? sanitizeTagName(obj.tagName) : config.trackerTagName,
-        codeBlockIdentifier: typeof obj.tagType === "string" ? sanitizeIdentifier(obj.tagType) : config.codeBlockIdentifier,
+        trackerTagName: typeof obj.tagName === "string" ? sanitizeTagName2(obj.tagName) : config.trackerTagName,
+        codeBlockIdentifier: typeof obj.tagType === "string" ? sanitizeIdentifier2(obj.tagType) : config.codeBlockIdentifier,
         hideSimBlocks: typeof obj.removeFromMessage === "boolean" ? obj.removeFromMessage : config.hideSimBlocks
       };
       configTrackerTagNameHint = config.trackerTagName;
@@ -20628,8 +20654,8 @@ function setup(ctx) {
     runtimeSeededPresets = Array.isArray(obj.seededPresets) ? obj.seededPresets : runtimeSeededPresets;
     ephemeralPoolStatus = obj.ephemeralPoolStatus && typeof obj.ephemeralPoolStatus === "object" ? obj.ephemeralPoolStatus : null;
     config = {
-      trackerTagName: typeof incoming.trackerTagName === "string" ? sanitizeTagName(incoming.trackerTagName) : DEFAULT_CONFIG.trackerTagName,
-      codeBlockIdentifier: typeof incoming.codeBlockIdentifier === "string" ? sanitizeIdentifier(incoming.codeBlockIdentifier) : DEFAULT_CONFIG.codeBlockIdentifier,
+      trackerTagName: typeof incoming.trackerTagName === "string" ? sanitizeTagName2(incoming.trackerTagName) : DEFAULT_CONFIG.trackerTagName,
+      codeBlockIdentifier: typeof incoming.codeBlockIdentifier === "string" ? sanitizeIdentifier2(incoming.codeBlockIdentifier) : DEFAULT_CONFIG.codeBlockIdentifier,
       hideSimBlocks: typeof incoming.hideSimBlocks === "boolean" ? incoming.hideSimBlocks : DEFAULT_CONFIG.hideSimBlocks,
       templateId: typeof incoming.templateId === "string" ? incoming.templateId : DEFAULT_CONFIG.templateId,
       trackerFormat: incoming.trackerFormat === "yaml" ? "yaml" : "json",
@@ -20892,8 +20918,8 @@ function setup(ctx) {
     config = {
       ...config,
       templateId: selectedTemplate,
-      trackerTagName: sanitizeTagName(tagInput?.value || "tracker"),
-      codeBlockIdentifier: sanitizeIdentifier(identifierInput?.value || fallbackId || "sim"),
+      trackerTagName: sanitizeTagName2(tagInput?.value || "tracker"),
+      codeBlockIdentifier: sanitizeIdentifier2(identifierInput?.value || fallbackId || "sim"),
       hideSimBlocks: Boolean(hideInput?.checked),
       enableInlineTemplates: Boolean(inlineInput?.checked),
       trackerFormat: formatSelect?.value === "yaml" ? "yaml" : "json",

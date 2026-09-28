@@ -7,51 +7,9 @@ import { buildTrackerMarkup } from "./frontendTemplateRenderer";
 import { CONFIG_ERROR_STATUS_PREFIX, DEFAULT_PANEL_STATUS, LOADING_CONFIG_STATUS, PANEL_CSS, PANEL_HTML } from "./frontendPanel";
 import { registerTemplateHelpers } from "./frontendTemplateHelpers";
 import { createInlineTemplateProcessor } from "./inlineTemplates";
-
-type FertilityCycleBias =
-  | "random"
-  | "menstruating"
-  | "start_follicular"
-  | "close_ovulation"
-  | "ovulating"
-  | "start_luteal"
-  | "end_luteal";
-
-const FERTILITY_CYCLE_BIAS_VALUES: readonly FertilityCycleBias[] = [
-  "random",
-  "menstruating",
-  "start_follicular",
-  "close_ovulation",
-  "ovulating",
-  "start_luteal",
-  "end_luteal",
-];
-
-type TrackerConfig = {
-  trackerTagName: string;
-  codeBlockIdentifier: string;
-  hideSimBlocks: boolean;
-  templateId: string;
-  trackerFormat: "json" | "yaml";
-  retainTrackerCount: number;
-  enableInlineTemplates: boolean;
-  userPresets: TemplatePreset[];
-  inlinePacks: Array<Record<string, unknown>>;
-  useSecondaryLLM: boolean;
-  secondaryLLMConnectionId: string;
-  secondaryLLMModel: string;
-  secondaryLLMMessageCount: number;
-  secondaryLLMTemperature: number;
-  secondaryLLMStripHTML: boolean;
-  fertilityCycleBias: FertilityCycleBias;
-  typeSafeEnabled: boolean;
-  typeSafeApiKey: string;
-  typeSafeModel: string;
-  typeSafeQuickAppend: boolean;
-  typeSafeVerify: boolean;
-  typeSafeConception: boolean;
-  typeSafeConfidenceFloor: number;
-};
+import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "./trackerConfig";
+import { createFrontendMessageSyntax, readMessageContext } from "./frontendMessageSyntax";
+import { sanitizeIdentifier, sanitizeTagName } from "./trackerSyntax";
 
 type ConnectionProfile = {
   id: string;
@@ -63,32 +21,6 @@ type ConnectionProfile = {
 };
 
 
-const DEFAULT_CONFIG: TrackerConfig = {
-  trackerTagName: "tracker",
-  codeBlockIdentifier: "sim",
-  hideSimBlocks: true,
-  templateId: "bento-style-tracker",
-  trackerFormat: "json",
-  retainTrackerCount: 3,
-  enableInlineTemplates: false,
-  userPresets: [],
-  inlinePacks: [],
-  useSecondaryLLM: false,
-  secondaryLLMConnectionId: "",
-  secondaryLLMModel: "",
-  secondaryLLMMessageCount: 5,
-  secondaryLLMTemperature: 0.7,
-  secondaryLLMStripHTML: true,
-  fertilityCycleBias: "random",
-  typeSafeEnabled: false,
-  typeSafeApiKey: "",
-  typeSafeModel: "jev-latest",
-  typeSafeQuickAppend: true,
-  typeSafeVerify: true,
-  typeSafeConception: true,
-  typeSafeConfidenceFloor: 0.6,
-};
-
 const BUILTIN_PRESETS = getTemplatePresets();
 let runtimeSeededPresets: TemplatePreset[] = [];
 let panelRoot: Element | null = null;
@@ -96,14 +28,6 @@ function byId<T extends Element>(id: string): T | null {
   const scoped = panelRoot?.querySelector(`#${id}`) as T | null;
   if (scoped) return scoped;
   return document.getElementById(id) as T | null;
-}
-
-function sanitizeIdentifier(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "sim";
-}
-
-function sanitizeTagName(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "tracker";
 }
 
 function sanitizeRetainCount(value: string): number {
@@ -131,66 +55,8 @@ function getPresetById(config: TrackerConfig, id: string): TemplatePreset {
   return getAllPresets(config).find((preset) => preset.id === id) || BUILTIN_PRESETS[0];
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractTrackerBlock(content: string, identifier: string): string | null {
-  const tagName = sanitizeTagName(configTrackerTagNameHint || "tracker");
-  const tagRe = new RegExp(String.raw`<${escapeRegex(tagName)}\b([^>]*)>([\s\S]*?)<\/${escapeRegex(tagName)}>` , "ig");
-  const cleanIdentifier = sanitizeIdentifier(identifier);
-  let tagMatch: RegExpExecArray | null;
-  while ((tagMatch = tagRe.exec(content)) !== null) {
-    const attrsRaw = tagMatch[1] || "";
-    const attrs = parseTagAttrs(attrsRaw);
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== cleanIdentifier) continue;
-    return tagMatch[2]?.trim() || null;
-  }
-
-  if (!cleanIdentifier) return null;
-  const id = escapeRegex(cleanIdentifier);
-  const re = new RegExp(String.raw`(?:^|\n)\s*\`\`\`[ \t]*${id}(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*\`\`\``, "i");
-  return content.match(re)?.[1]?.trim() || null;
-}
-
-function parseTagAttrs(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const attrRe = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRe.exec(raw)) !== null) {
-    const key = match[1];
-    const value = match[2] ?? match[3] ?? match[4] ?? "";
-    out[key] = value;
-  }
-  return out;
-}
-
 let configTrackerTagNameHint = "tracker";
-
-function readMessageContext(payload: unknown): { content: string | null; messageId: string | null; isUser: boolean | null } | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  const messageIdCandidate = typeof value.messageId === "string" ? value.messageId : typeof value.message_id === "string" ? value.message_id : null;
-  if (typeof value.content === "string") {
-    return {
-      content: value.content,
-      messageId: messageIdCandidate,
-      isUser: typeof value.is_user === "boolean" ? value.is_user : null,
-    };
-  }
-  const nested = value.message as Record<string, unknown> | undefined;
-  return {
-    content: typeof nested?.content === "string" ? nested.content : null,
-    messageId:
-      typeof nested?.id === "string"
-        ? nested.id
-        : typeof nested?.messageId === "string"
-          ? nested.messageId
-          : messageIdCandidate,
-    isUser: typeof nested?.is_user === "boolean" ? nested.is_user : null,
-  };
-}
+const { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
 
 function setStatus(text: string): void {
   const el = byId<HTMLElement>("sst-lumi-status");

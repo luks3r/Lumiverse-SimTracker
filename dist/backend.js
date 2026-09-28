@@ -13094,6 +13094,537 @@ function buildFirstMessageHint(bias) {
   return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
 }
 
+// src/trackerConfig.ts
+var FERTILITY_CYCLE_BIAS_VALUES = [
+  "random",
+  "menstruating",
+  "start_follicular",
+  "close_ovulation",
+  "ovulating",
+  "start_luteal",
+  "end_luteal"
+];
+var DEFAULT_CONFIG = {
+  trackerTagName: "tracker",
+  codeBlockIdentifier: "sim",
+  hideSimBlocks: true,
+  templateId: "bento-style-tracker",
+  trackerFormat: "json",
+  retainTrackerCount: 3,
+  enableInlineTemplates: false,
+  userPresets: [],
+  inlinePacks: [],
+  useSecondaryLLM: false,
+  secondaryLLMConnectionId: "",
+  secondaryLLMModel: "",
+  secondaryLLMMessageCount: 5,
+  secondaryLLMTemperature: 0.7,
+  secondaryLLMStripHTML: true,
+  fertilityCycleBias: "random",
+  typeSafeEnabled: false,
+  typeSafeApiKey: "",
+  typeSafeModel: "jev-latest",
+  typeSafeQuickAppend: true,
+  typeSafeVerify: true,
+  typeSafeConception: true,
+  typeSafeConfidenceFloor: 0.6
+};
+
+// src/backendConfig.ts
+function sanitizeTrackerFormat(value) {
+  return value === "yaml" ? "yaml" : "json";
+}
+function sanitizeTemplateId(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.templateId;
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_CONFIG.templateId;
+}
+function sanitizeRetainCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.retainTrackerCount;
+  return Math.max(0, Math.min(20, Math.floor(value)));
+}
+function sanitizeInlineEnabled(value) {
+  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
+}
+function sanitizeBool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function sanitizeStr(value, fallback) {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+function sanitizeFertilityCycleBias(value) {
+  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
+}
+function sanitizeSecondaryLLMModel(value, fallback) {
+  const raw = sanitizeStr(value, fallback);
+  const lowered = raw.toLowerCase();
+  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
+    return "";
+  }
+  return raw;
+}
+function sanitizeMessageCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMMessageCount;
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+function sanitizeTemperature(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMTemperature;
+  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
+}
+function sanitizeTypeSafeModel(value) {
+  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
+  return model || DEFAULT_CONFIG.typeSafeModel;
+}
+function sanitizeConfidenceFloor(value) {
+  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
+  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
+}
+
+// src/trackerSyntax.ts
+function sanitizeIdentifier(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.codeBlockIdentifier;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed)
+    return DEFAULT_CONFIG.codeBlockIdentifier;
+  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.codeBlockIdentifier;
+}
+function sanitizeTagName(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.trackerTagName;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed)
+    return DEFAULT_CONFIG.trackerTagName;
+  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
+}
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildTrackerFenceRegex(identifier, flags = "i") {
+  const cleanIdentifier = sanitizeIdentifier(identifier);
+  const escapedIdentifier = escapeRegex(cleanIdentifier);
+  return new RegExp(String.raw`\`\`\`[ \t]*${escapedIdentifier}(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*\`\`\``, flags);
+}
+function parseTagAttributes(raw) {
+  const out = {};
+  const re = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let match;
+  while ((match = re.exec(raw)) !== null) {
+    const key = match[1] || "";
+    if (!key)
+      continue;
+    out[key] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return out;
+}
+function buildTrackerTagRegex(tagName, flags = "i") {
+  const safeTag = escapeRegex(sanitizeTagName(tagName));
+  return new RegExp(String.raw`<${safeTag}\b([^>]*)>([\s\S]*?)<\/${safeTag}>`, flags);
+}
+function extractSimBlock(message, identifier) {
+  const re = buildTrackerFenceRegex(identifier, "i");
+  const match = message.match(re);
+  if (!match)
+    return null;
+  return match[1]?.trim() || null;
+}
+function extractTrackerTag(message, tagName, identifier) {
+  const re = buildTrackerTagRegex(tagName, "ig");
+  const cleanIdentifier = sanitizeIdentifier(identifier);
+  let match;
+  while ((match = re.exec(message)) !== null) {
+    const attrs = parseTagAttributes(match[1] || "");
+    const typeAttr = sanitizeIdentifier(attrs.type || "");
+    if (typeAttr && typeAttr !== cleanIdentifier)
+      continue;
+    return (match[2] || "").trim() || null;
+  }
+  return null;
+}
+function extractTrackerTagLoose(message, tagName) {
+  const re = buildTrackerTagRegex(tagName, "ig");
+  const match = re.exec(message);
+  return match ? (match[2] || "").trim() || null : null;
+}
+
+// src/trackerMessageCodec.ts
+function createTrackerMessageCodec(readConfig) {
+  const config = {
+    get trackerTagName() {
+      return readConfig().trackerTagName;
+    },
+    get codeBlockIdentifier() {
+      return readConfig().codeBlockIdentifier;
+    }
+  };
+  function buildCanonicalTrackerTag(payload, identifier) {
+    const tagName = sanitizeTagName(config.trackerTagName);
+    const safeIdentifier = sanitizeIdentifier(identifier);
+    return `<${tagName} type="${safeIdentifier}">
+${payload.trim()}
+</${tagName}>`;
+  }
+  function extractAnyTrackerFencePayload(message) {
+    const fenceRe = /```[ \t]*([a-z0-9_-]+)(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*```/gi;
+    let match;
+    while ((match = fenceRe.exec(message)) !== null) {
+      const payload = (match[2] || "").trim();
+      if (!payload)
+        continue;
+      const directTagPayload = extractTrackerTagLoose(payload, config.trackerTagName);
+      if (directTagPayload)
+        return directTagPayload;
+      const parsed = parseTrackerPayload(payload);
+      if (parsed)
+        return payload;
+    }
+    return null;
+  }
+  function legacyHiddenDivTrackerRanges(message) {
+    const ranges = [];
+    const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
+    let match;
+    while ((match = divRe.exec(message)) !== null) {
+      const attrs = match[1] || "";
+      const inner = match[2] || "";
+      const full = match[0] || "";
+      if (typeof match.index !== "number" || !full)
+        continue;
+      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
+        continue;
+      }
+      if (!extractLegacyHiddenDivNormalizedPayload(inner, config.codeBlockIdentifier))
+        continue;
+      ranges.push({ start: match.index, end: match.index + full.length });
+    }
+    return ranges;
+  }
+  function extractLegacyHiddenDivNormalizedPayload(inner, identifier) {
+    const directTagPayload = extractTrackerTagLoose(inner, config.trackerTagName);
+    if (directTagPayload)
+      return directTagPayload;
+    const fencedPayload = extractSimBlock(inner, identifier) || (identifier !== DEFAULT_CONFIG.codeBlockIdentifier ? extractSimBlock(inner, DEFAULT_CONFIG.codeBlockIdentifier) : null) || extractAnyTrackerFencePayload(inner);
+    if (!fencedPayload)
+      return null;
+    return extractTrackerTagLoose(fencedPayload, config.trackerTagName) || fencedPayload.trim() || null;
+  }
+  function extractLegacyHiddenDivTrackerPayload(message) {
+    const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
+    let match;
+    while ((match = divRe.exec(message)) !== null) {
+      const attrs = match[1] || "";
+      const inner = match[2] || "";
+      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
+        continue;
+      }
+      const payload = extractLegacyHiddenDivNormalizedPayload(inner, config.codeBlockIdentifier);
+      if (payload)
+        return payload;
+    }
+    return null;
+  }
+  function extractTrackerPayloadFromMessage(message) {
+    return extractTrackerTag(message, config.trackerTagName, config.codeBlockIdentifier) || extractSimBlock(message, config.codeBlockIdentifier) || extractLegacyHiddenDivTrackerPayload(message);
+  }
+  function normalizeLegacyHiddenDivTrackers(message) {
+    if (!message)
+      return { content: message, replacements: 0 };
+    const tagName = sanitizeTagName(config.trackerTagName);
+    const identifier = sanitizeIdentifier(config.codeBlockIdentifier);
+    const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
+    let replacements = 0;
+    const content = message.replace(divRe, (full, rawAttrs, rawInner) => {
+      const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
+      const inner = typeof rawInner === "string" ? rawInner : "";
+      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
+        return full;
+      }
+      const payload = extractLegacyHiddenDivNormalizedPayload(inner, identifier);
+      if (!payload)
+        return full;
+      replacements += 1;
+      return buildCanonicalTrackerTag(payload, identifier);
+    });
+    return { content, replacements };
+  }
+  return { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload };
+}
+
+// src/trackerPromptRetention.ts
+function createTrackerPromptRetention(readConfig, codec) {
+  const config = {
+    get trackerTagName() {
+      return readConfig().trackerTagName;
+    },
+    get codeBlockIdentifier() {
+      return readConfig().codeBlockIdentifier;
+    }
+  };
+  const { legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload, extractTrackerPayloadFromMessage } = codec;
+  function collectTrackerBlockRanges(content, identifier) {
+    if (!content)
+      return [];
+    const desiredType = sanitizeIdentifier(identifier);
+    const ranges = [];
+    const seenStarts = new Set;
+    const fenceRe = buildTrackerFenceRegex(identifier, "gi");
+    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
+    for (const match of content.matchAll(fenceRe)) {
+      const text = match[0] || "";
+      const start = match.index;
+      if (typeof start !== "number" || !text || seenStarts.has(start))
+        continue;
+      seenStarts.add(start);
+      ranges.push({ start, end: start + text.length });
+    }
+    for (const match of content.matchAll(tagRe)) {
+      const text = match[0] || "";
+      const start = match.index;
+      if (typeof start !== "number" || !text || seenStarts.has(start))
+        continue;
+      const attrs = parseTagAttributes(match[1] || "");
+      const foundType = sanitizeIdentifier(attrs.type || "");
+      if (foundType && foundType !== desiredType)
+        continue;
+      seenStarts.add(start);
+      ranges.push({ start, end: start + text.length });
+    }
+    for (const range of legacyHiddenDivTrackerRanges(content)) {
+      if (seenStarts.has(range.start))
+        continue;
+      seenStarts.add(range.start);
+      ranges.push(range);
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    return ranges;
+  }
+  function formatTrackerBlocksInMessages(messages) {
+    let output = null;
+    for (let i = 0;i < messages.length; i += 1) {
+      const message = messages[i];
+      if (!message || typeof message.content !== "string")
+        continue;
+      const ranges = collectTrackerBlockRanges(message.content, config.codeBlockIdentifier);
+      if (ranges.length === 0)
+        continue;
+      let content = message.content;
+      let changed = false;
+      for (let j = ranges.length - 1;j >= 0; j -= 1) {
+        const range = ranges[j];
+        const block = content.slice(range.start, range.end);
+        const payload = extractTrackerPayloadFromMessage(block);
+        if (!payload)
+          continue;
+        const replacement = `Previous tracker state:
+${formatTrackerForPrompt(payload)}`;
+        content = content.slice(0, range.start) + replacement + content.slice(range.end);
+        changed = true;
+      }
+      if (!changed)
+        continue;
+      if (!output)
+        output = messages.slice();
+      output[i] = { ...message, content };
+    }
+    return output || messages;
+  }
+  function stripAllTrackerBlocks(content, identifier) {
+    if (!content)
+      return content;
+    const desiredType = sanitizeIdentifier(identifier);
+    let out = content.replace(buildTrackerFenceRegex(identifier, "gi"), "");
+    out = out.replace(buildTrackerTagRegex(config.trackerTagName, "gi"), (full, attrsRaw) => {
+      const attrs = parseTagAttributes(String(attrsRaw || ""));
+      const foundType = sanitizeIdentifier(attrs.type || "");
+      if (foundType && foundType !== desiredType)
+        return full;
+      return "";
+    });
+    out = out.replace(/<div\b([^>]*)>([\s\S]*?)<\/div>/gi, (full, rawAttrs, rawInner) => {
+      const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
+      const inner = typeof rawInner === "string" ? rawInner : "";
+      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
+        return full;
+      }
+      return extractLegacyHiddenDivNormalizedPayload(inner, identifier) ? "" : full;
+    });
+    return out.replace(/\n\s*\n\s*\n/g, `
+
+`).trim();
+  }
+  function stripOldTrackerBlocksGlobal(messages, identifier, keepNewest) {
+    if (keepNewest < 0)
+      return messages;
+    if (keepNewest === 0) {
+      return messages.map((msg) => {
+        if (!msg || typeof msg.content !== "string")
+          return msg;
+        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
+      });
+    }
+    let remaining = keepNewest;
+    let cutoffMsgIdx = -1;
+    let keepInCutoff = 0;
+    for (let msgIdx = messages.length - 1;msgIdx >= 0; msgIdx -= 1) {
+      const msg = messages[msgIdx];
+      if (!msg || typeof msg.content !== "string")
+        continue;
+      const count = countMatchingTrackerBlocksInMessage(msg.content);
+      if (count === 0)
+        continue;
+      if (count >= remaining) {
+        cutoffMsgIdx = msgIdx;
+        keepInCutoff = remaining;
+        break;
+      }
+      remaining -= count;
+    }
+    if (cutoffMsgIdx < 0)
+      return messages;
+    return messages.map((msg, msgIdx) => {
+      if (!msg || typeof msg.content !== "string")
+        return msg;
+      if (msgIdx > cutoffMsgIdx)
+        return msg;
+      if (msgIdx < cutoffMsgIdx) {
+        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
+      }
+      const ranges = collectTrackerBlockRanges(msg.content, identifier);
+      if (ranges.length === 0)
+        return msg;
+      const keepStart = Math.max(0, ranges.length - keepInCutoff);
+      let out = "";
+      let cursor = 0;
+      for (let i = 0;i < ranges.length; i += 1) {
+        const r = ranges[i];
+        out += msg.content.slice(cursor, r.start);
+        if (i >= keepStart)
+          out += msg.content.slice(r.start, r.end);
+        cursor = r.end;
+      }
+      out += msg.content.slice(cursor);
+      return { ...msg, content: out.replace(/\n\s*\n\s*\n/g, `
+
+`).trim() };
+    });
+  }
+  function countMatchingTrackerBlocksInMessage(content) {
+    if (!content)
+      return 0;
+    let count = 0;
+    const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
+    for (const match of content.matchAll(fenceRe)) {
+      if (match[0])
+        count++;
+    }
+    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
+    const cleanIdentifier = sanitizeIdentifier(config.codeBlockIdentifier);
+    for (const match of content.matchAll(tagRe)) {
+      const attrs = parseTagAttributes(match[1] || "");
+      const typeAttr = sanitizeIdentifier(attrs.type || "");
+      if (typeAttr && typeAttr !== cleanIdentifier)
+        continue;
+      if (match[0])
+        count++;
+    }
+    for (const _range of legacyHiddenDivTrackerRanges(content)) {
+      count++;
+    }
+    return count;
+  }
+  function countTrackersInMessages(messages, maxNeeded = Number.MAX_SAFE_INTEGER) {
+    let count = 0;
+    for (let i = messages.length - 1;i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (!msg || typeof msg.content !== "string")
+        continue;
+      count += countMatchingTrackerBlocksInMessage(msg.content);
+      if (count >= maxNeeded)
+        return count;
+    }
+    return count;
+  }
+  function buildTrackerInjectionBlock(entries) {
+    if (entries.length === 1) {
+      return `Previous tracker state:
+${formatTrackerForPrompt(entries[0].payload)}`;
+    }
+    const snapshots = entries.map((entry, index) => `Snapshot ${index + 1}:
+${formatTrackerForPrompt(entry.payload)}`).join(`
+
+`);
+    return `Previous tracker states (oldest \u2192 newest):
+
+${snapshots}`;
+  }
+  function withTrailingDirective(messages, directive) {
+    if (!directive)
+      return messages;
+    const injected = messages.slice();
+    injected.splice(Math.max(0, injected.length - 1), 0, { role: "system", content: directive });
+    return injected;
+  }
+  return { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective };
+}
+
+// src/secondaryPromptText.ts
+function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
+  if (!base)
+    return base;
+  const safeTag = sanitizeTagName(tagName);
+  const safeId = sanitizeIdentifier(identifier);
+  const idEsc = escapeRegex(safeId);
+  const wrap = (body) => `<${safeTag} type="${safeId}">
+${body.trim()}
+</${safeTag}>`;
+  const idFenceRe = new RegExp(String.raw`\`\`\`[ \t]*${idEsc}\b[^\n]*\r?\n([\s\S]*?)\r?\n?[ \t]*\`\`\``, "gi");
+  let out = base.replace(idFenceRe, (_m, body) => wrap(body));
+  const dataFenceRe = /```[ \t]*(?:json|yaml|yml)\b[^\n]*\r?\n([\s\S]*?)\r?\n?[ \t]*```/gi;
+  out = out.replace(dataFenceRe, (match, body) => {
+    const looksLikeTracker = /\bworldData\b|\bcharacters?\b|"name"\s*:/.test(body);
+    return looksLikeTracker ? wrap(body) : match;
+  });
+  const textRe = new RegExp(String.raw`\`?${idEsc}\`?[ \t]*code[ \t-]*block(?:s)?`, "gi");
+  out = out.replace(textRe, `${safeTag} tag`);
+  return out;
+}
+function stripStructuralHTML(text) {
+  if (!text)
+    return text;
+  const tagsToRemove = [
+    "div",
+    "details",
+    "summary",
+    "section",
+    "article",
+    "aside",
+    "nav",
+    "header",
+    "footer",
+    "main",
+    "figure",
+    "figcaption",
+    "blockquote",
+    "pre",
+    "code",
+    "script",
+    "style",
+    "iframe",
+    "object",
+    "embed"
+  ];
+  let stripped = text;
+  for (const tag of tagsToRemove) {
+    stripped = stripped.replace(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, "gi"), "");
+    stripped = stripped.replace(new RegExp(`<${tag}[^>]*\\/>`, "gi"), "");
+  }
+  return stripped.replace(/\s+/g, " ").trim();
+}
+
 // src/presetSanitizers.ts
 function upgradeLegacyImportedPreset(preset) {
   const html = preset.htmlTemplate || "";
@@ -13614,40 +14145,6 @@ function interpretConceptionAnswers(answers, candidates, fireThreshold = CONCEPT
 // src/backend.ts
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
-var FERTILITY_CYCLE_BIAS_VALUES = [
-  "random",
-  "menstruating",
-  "start_follicular",
-  "close_ovulation",
-  "ovulating",
-  "start_luteal",
-  "end_luteal"
-];
-var DEFAULT_CONFIG = {
-  trackerTagName: "tracker",
-  codeBlockIdentifier: "sim",
-  hideSimBlocks: true,
-  templateId: "bento-style-tracker",
-  trackerFormat: "json",
-  retainTrackerCount: 3,
-  enableInlineTemplates: false,
-  userPresets: [],
-  inlinePacks: [],
-  useSecondaryLLM: false,
-  secondaryLLMConnectionId: "",
-  secondaryLLMModel: "",
-  secondaryLLMMessageCount: 5,
-  secondaryLLMTemperature: 0.7,
-  secondaryLLMStripHTML: true,
-  fertilityCycleBias: "random",
-  typeSafeEnabled: false,
-  typeSafeApiKey: "",
-  typeSafeModel: "jev-latest",
-  typeSafeQuickAppend: true,
-  typeSafeVerify: true,
-  typeSafeConception: true,
-  typeSafeConfidenceFloor: 0.6
-};
 var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
 var CONFIG_PATH = "preferences.json";
 var config = { ...DEFAULT_CONFIG };
@@ -13671,213 +14168,8 @@ function getAllPresets() {
 function getActivePreset() {
   return getAllPresets().find((preset) => preset.id === config.templateId) || getTemplatePresetById(config.templateId) || getTemplatePresetById(DEFAULT_CONFIG.templateId);
 }
-function sanitizeIdentifier(value) {
-  if (typeof value !== "string")
-    return DEFAULT_CONFIG.codeBlockIdentifier;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed)
-    return DEFAULT_CONFIG.codeBlockIdentifier;
-  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.codeBlockIdentifier;
-}
-function sanitizeTagName(value) {
-  if (typeof value !== "string")
-    return DEFAULT_CONFIG.trackerTagName;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed)
-    return DEFAULT_CONFIG.trackerTagName;
-  return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
-}
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function buildTrackerFenceRegex(identifier, flags = "i") {
-  const cleanIdentifier = sanitizeIdentifier(identifier);
-  const escapedIdentifier = escapeRegex(cleanIdentifier);
-  return new RegExp(String.raw`\`\`\`[ \t]*${escapedIdentifier}(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*\`\`\``, flags);
-}
-function parseTagAttributes(raw) {
-  const out = {};
-  const re = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-  let match;
-  while ((match = re.exec(raw)) !== null) {
-    const key = match[1] || "";
-    if (!key)
-      continue;
-    out[key] = match[2] ?? match[3] ?? match[4] ?? "";
-  }
-  return out;
-}
-function buildTrackerTagRegex(tagName, flags = "i") {
-  const safeTag = escapeRegex(sanitizeTagName(tagName));
-  return new RegExp(String.raw`<${safeTag}\b([^>]*)>([\s\S]*?)<\/${safeTag}>`, flags);
-}
-function extractSimBlock(message, identifier) {
-  const re = buildTrackerFenceRegex(identifier, "i");
-  const match = message.match(re);
-  if (!match)
-    return null;
-  return match[1]?.trim() || null;
-}
-function extractTrackerTag(message, tagName, identifier) {
-  const re = buildTrackerTagRegex(tagName, "ig");
-  const cleanIdentifier = sanitizeIdentifier(identifier);
-  let match;
-  while ((match = re.exec(message)) !== null) {
-    const attrs = parseTagAttributes(match[1] || "");
-    const typeAttr = sanitizeIdentifier(attrs.type || "");
-    if (typeAttr && typeAttr !== cleanIdentifier)
-      continue;
-    return (match[2] || "").trim() || null;
-  }
-  return null;
-}
-function extractTrackerTagLoose(message, tagName) {
-  const re = buildTrackerTagRegex(tagName, "ig");
-  const match = re.exec(message);
-  return match ? (match[2] || "").trim() || null : null;
-}
-function buildCanonicalTrackerTag(payload, identifier) {
-  const tagName = sanitizeTagName(config.trackerTagName);
-  const safeIdentifier = sanitizeIdentifier(identifier);
-  return `<${tagName} type="${safeIdentifier}">
-${payload.trim()}
-</${tagName}>`;
-}
-function extractAnyTrackerFencePayload(message) {
-  const fenceRe = /```[ \t]*([a-z0-9_-]+)(?=[ \t\r\n]|$)[^\n\r]*\r?\n([\s\S]*?)\r?\n?\s*```/gi;
-  let match;
-  while ((match = fenceRe.exec(message)) !== null) {
-    const payload = (match[2] || "").trim();
-    if (!payload)
-      continue;
-    const directTagPayload = extractTrackerTagLoose(payload, config.trackerTagName);
-    if (directTagPayload)
-      return directTagPayload;
-    const parsed = parseTrackerPayload(payload);
-    if (parsed)
-      return payload;
-  }
-  return null;
-}
-function legacyHiddenDivTrackerRanges(message) {
-  const ranges = [];
-  const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
-  let match;
-  while ((match = divRe.exec(message)) !== null) {
-    const attrs = match[1] || "";
-    const inner = match[2] || "";
-    const full = match[0] || "";
-    if (typeof match.index !== "number" || !full)
-      continue;
-    if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
-      continue;
-    }
-    if (!extractLegacyHiddenDivNormalizedPayload(inner, config.codeBlockIdentifier))
-      continue;
-    ranges.push({ start: match.index, end: match.index + full.length });
-  }
-  return ranges;
-}
-function extractLegacyHiddenDivNormalizedPayload(inner, identifier) {
-  const directTagPayload = extractTrackerTagLoose(inner, config.trackerTagName);
-  if (directTagPayload)
-    return directTagPayload;
-  const fencedPayload = extractSimBlock(inner, identifier) || (identifier !== DEFAULT_CONFIG.codeBlockIdentifier ? extractSimBlock(inner, DEFAULT_CONFIG.codeBlockIdentifier) : null) || extractAnyTrackerFencePayload(inner);
-  if (!fencedPayload)
-    return null;
-  return extractTrackerTagLoose(fencedPayload, config.trackerTagName) || fencedPayload.trim() || null;
-}
-function extractLegacyHiddenDivTrackerPayload(message) {
-  const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
-  let match;
-  while ((match = divRe.exec(message)) !== null) {
-    const attrs = match[1] || "";
-    const inner = match[2] || "";
-    if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
-      continue;
-    }
-    const payload = extractLegacyHiddenDivNormalizedPayload(inner, config.codeBlockIdentifier);
-    if (payload)
-      return payload;
-  }
-  return null;
-}
-function extractTrackerPayloadFromMessage(message) {
-  return extractTrackerTag(message, config.trackerTagName, config.codeBlockIdentifier) || extractSimBlock(message, config.codeBlockIdentifier) || extractLegacyHiddenDivTrackerPayload(message);
-}
-function normalizeLegacyHiddenDivTrackers(message) {
-  if (!message)
-    return { content: message, replacements: 0 };
-  const tagName = sanitizeTagName(config.trackerTagName);
-  const identifier = sanitizeIdentifier(config.codeBlockIdentifier);
-  const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
-  let replacements = 0;
-  const content = message.replace(divRe, (full, rawAttrs, rawInner) => {
-    const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
-    const inner = typeof rawInner === "string" ? rawInner : "";
-    if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
-      return full;
-    }
-    const payload = extractLegacyHiddenDivNormalizedPayload(inner, identifier);
-    if (!payload)
-      return full;
-    replacements += 1;
-    return buildCanonicalTrackerTag(payload, identifier);
-  });
-  return { content, replacements };
-}
-function sanitizeTrackerFormat(value) {
-  return value === "yaml" ? "yaml" : "json";
-}
-function sanitizeTemplateId(value) {
-  if (typeof value !== "string")
-    return DEFAULT_CONFIG.templateId;
-  const trimmed = value.trim();
-  return trimmed || DEFAULT_CONFIG.templateId;
-}
-function sanitizeRetainCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.retainTrackerCount;
-  return Math.max(0, Math.min(20, Math.floor(value)));
-}
-function sanitizeInlineEnabled(value) {
-  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
-}
-function sanitizeBool(value, fallback) {
-  return typeof value === "boolean" ? value : fallback;
-}
-function sanitizeStr(value, fallback) {
-  return typeof value === "string" ? value.trim() : fallback;
-}
-function sanitizeFertilityCycleBias(value) {
-  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
-}
-function sanitizeSecondaryLLMModel(value, fallback) {
-  const raw = sanitizeStr(value, fallback);
-  const lowered = raw.toLowerCase();
-  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
-    return "";
-  }
-  return raw;
-}
-function sanitizeMessageCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMMessageCount;
-  return Math.max(1, Math.min(50, Math.floor(value)));
-}
-function sanitizeTemperature(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMTemperature;
-  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
-}
-function sanitizeTypeSafeModel(value) {
-  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
-  return model || DEFAULT_CONFIG.typeSafeModel;
-}
-function sanitizeConfidenceFloor(value) {
-  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
-  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
-}
+var trackerMessageCodec = createTrackerMessageCodec(() => config);
+var { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload } = trackerMessageCodec;
 function hasPermission(name) {
   return runtime.grantedPermissions.has(name);
 }
@@ -14648,26 +14940,6 @@ spindle.registerMacro({
   returnType: "string",
   handler: ""
 });
-function sanitizeSysPromptForWireFormat(base, tagName, identifier) {
-  if (!base)
-    return base;
-  const safeTag = sanitizeTagName(tagName);
-  const safeId = sanitizeIdentifier(identifier);
-  const idEsc = escapeRegex(safeId);
-  const wrap = (body) => `<${safeTag} type="${safeId}">
-${body.trim()}
-</${safeTag}>`;
-  const idFenceRe = new RegExp(String.raw`\`\`\`[ \t]*${idEsc}\b[^\n]*\r?\n([\s\S]*?)\r?\n?[ \t]*\`\`\``, "gi");
-  let out = base.replace(idFenceRe, (_m, body) => wrap(body));
-  const dataFenceRe = /```[ \t]*(?:json|yaml|yml)\b[^\n]*\r?\n([\s\S]*?)\r?\n?[ \t]*```/gi;
-  out = out.replace(dataFenceRe, (match, body) => {
-    const looksLikeTracker = /\bworldData\b|\bcharacters?\b|"name"\s*:/.test(body);
-    return looksLikeTracker ? wrap(body) : match;
-  });
-  const textRe = new RegExp(String.raw`\`?${idEsc}\`?[ \t]*code[ \t-]*block(?:s)?`, "gi");
-  out = out.replace(textRe, `${safeTag} tag`);
-  return out;
-}
 function pushMacroValues() {
   const fmt = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
   spindle.updateMacroValue("sim_format", fmt);
@@ -14714,38 +14986,6 @@ function enqueueSecondaryGeneration(chatId, messageId) {
     queuedSecondaryJobs.delete(key);
   });
   return secondaryGenerationChain;
-}
-function stripStructuralHTML(text) {
-  if (!text)
-    return text;
-  const tagsToRemove = [
-    "div",
-    "details",
-    "summary",
-    "section",
-    "article",
-    "aside",
-    "nav",
-    "header",
-    "footer",
-    "main",
-    "figure",
-    "figcaption",
-    "blockquote",
-    "pre",
-    "code",
-    "script",
-    "style",
-    "iframe",
-    "object",
-    "embed"
-  ];
-  let stripped = text;
-  for (const tag of tagsToRemove) {
-    stripped = stripped.replace(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, "gi"), "");
-    stripped = stripped.replace(new RegExp(`<${tag}[^>]*\\/>`, "gi"), "");
-  }
-  return stripped.replace(/\s+/g, " ").trim();
 }
 var SECONDARY_LLM_MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
 function describeMissingModelGuidance() {
@@ -15094,153 +15334,7 @@ spindle.on("GENERATION_ENDED", (payload, userId) => {
     enqueueSecondaryGeneration(ctx.chatId, latestAssistant.id);
   })();
 });
-function collectTrackerBlockRanges(content, identifier) {
-  if (!content)
-    return [];
-  const desiredType = sanitizeIdentifier(identifier);
-  const ranges = [];
-  const seenStarts = new Set;
-  const fenceRe = buildTrackerFenceRegex(identifier, "gi");
-  const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
-  for (const match of content.matchAll(fenceRe)) {
-    const text = match[0] || "";
-    const start = match.index;
-    if (typeof start !== "number" || !text || seenStarts.has(start))
-      continue;
-    seenStarts.add(start);
-    ranges.push({ start, end: start + text.length });
-  }
-  for (const match of content.matchAll(tagRe)) {
-    const text = match[0] || "";
-    const start = match.index;
-    if (typeof start !== "number" || !text || seenStarts.has(start))
-      continue;
-    const attrs = parseTagAttributes(match[1] || "");
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== desiredType)
-      continue;
-    seenStarts.add(start);
-    ranges.push({ start, end: start + text.length });
-  }
-  for (const range of legacyHiddenDivTrackerRanges(content)) {
-    if (seenStarts.has(range.start))
-      continue;
-    seenStarts.add(range.start);
-    ranges.push(range);
-  }
-  ranges.sort((a, b) => a.start - b.start);
-  return ranges;
-}
-function formatTrackerBlocksInMessages(messages) {
-  let output = null;
-  for (let i = 0;i < messages.length; i += 1) {
-    const message = messages[i];
-    if (!message || typeof message.content !== "string")
-      continue;
-    const ranges = collectTrackerBlockRanges(message.content, config.codeBlockIdentifier);
-    if (ranges.length === 0)
-      continue;
-    let content = message.content;
-    let changed = false;
-    for (let j = ranges.length - 1;j >= 0; j -= 1) {
-      const range = ranges[j];
-      const block = content.slice(range.start, range.end);
-      const payload = extractTrackerPayloadFromMessage(block);
-      if (!payload)
-        continue;
-      const replacement = `Previous tracker state:
-${formatTrackerForPrompt(payload)}`;
-      content = content.slice(0, range.start) + replacement + content.slice(range.end);
-      changed = true;
-    }
-    if (!changed)
-      continue;
-    if (!output)
-      output = messages.slice();
-    output[i] = { ...message, content };
-  }
-  return output || messages;
-}
-function stripAllTrackerBlocks(content, identifier) {
-  if (!content)
-    return content;
-  const desiredType = sanitizeIdentifier(identifier);
-  let out = content.replace(buildTrackerFenceRegex(identifier, "gi"), "");
-  out = out.replace(buildTrackerTagRegex(config.trackerTagName, "gi"), (full, attrsRaw) => {
-    const attrs = parseTagAttributes(String(attrsRaw || ""));
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== desiredType)
-      return full;
-    return "";
-  });
-  out = out.replace(/<div\b([^>]*)>([\s\S]*?)<\/div>/gi, (full, rawAttrs, rawInner) => {
-    const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
-    const inner = typeof rawInner === "string" ? rawInner : "";
-    if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
-      return full;
-    }
-    return extractLegacyHiddenDivNormalizedPayload(inner, identifier) ? "" : full;
-  });
-  return out.replace(/\n\s*\n\s*\n/g, `
-
-`).trim();
-}
-function stripOldTrackerBlocksGlobal(messages, identifier, keepNewest) {
-  if (keepNewest < 0)
-    return messages;
-  if (keepNewest === 0) {
-    return messages.map((msg) => {
-      if (!msg || typeof msg.content !== "string")
-        return msg;
-      return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
-    });
-  }
-  let remaining = keepNewest;
-  let cutoffMsgIdx = -1;
-  let keepInCutoff = 0;
-  for (let msgIdx = messages.length - 1;msgIdx >= 0; msgIdx -= 1) {
-    const msg = messages[msgIdx];
-    if (!msg || typeof msg.content !== "string")
-      continue;
-    const count = countMatchingTrackerBlocksInMessage(msg.content);
-    if (count === 0)
-      continue;
-    if (count >= remaining) {
-      cutoffMsgIdx = msgIdx;
-      keepInCutoff = remaining;
-      break;
-    }
-    remaining -= count;
-  }
-  if (cutoffMsgIdx < 0)
-    return messages;
-  return messages.map((msg, msgIdx) => {
-    if (!msg || typeof msg.content !== "string")
-      return msg;
-    if (msgIdx > cutoffMsgIdx)
-      return msg;
-    if (msgIdx < cutoffMsgIdx) {
-      return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
-    }
-    const ranges = collectTrackerBlockRanges(msg.content, identifier);
-    if (ranges.length === 0)
-      return msg;
-    const keepStart = Math.max(0, ranges.length - keepInCutoff);
-    let out = "";
-    let cursor = 0;
-    for (let i = 0;i < ranges.length; i += 1) {
-      const r = ranges[i];
-      out += msg.content.slice(cursor, r.start);
-      if (i >= keepStart)
-        out += msg.content.slice(r.start, r.end);
-      cursor = r.end;
-    }
-    out += msg.content.slice(cursor);
-    return { ...msg, content: out.replace(/\n\s*\n\s*\n/g, `
-
-`).trim() };
-  });
-}
+var { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective } = createTrackerPromptRetention(() => config, trackerMessageCodec);
 function resolveInterceptorChatId(context) {
   if (context && typeof context === "object") {
     const obj = context;
@@ -15256,62 +15350,6 @@ function resolveInterceptorChatId(context) {
     }
   }
   return activeChatId;
-}
-function countMatchingTrackerBlocksInMessage(content) {
-  if (!content)
-    return 0;
-  let count = 0;
-  const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
-  for (const match of content.matchAll(fenceRe)) {
-    if (match[0])
-      count++;
-  }
-  const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
-  const cleanIdentifier = sanitizeIdentifier(config.codeBlockIdentifier);
-  for (const match of content.matchAll(tagRe)) {
-    const attrs = parseTagAttributes(match[1] || "");
-    const typeAttr = sanitizeIdentifier(attrs.type || "");
-    if (typeAttr && typeAttr !== cleanIdentifier)
-      continue;
-    if (match[0])
-      count++;
-  }
-  for (const _range of legacyHiddenDivTrackerRanges(content)) {
-    count++;
-  }
-  return count;
-}
-function countTrackersInMessages(messages, maxNeeded = Number.MAX_SAFE_INTEGER) {
-  let count = 0;
-  for (let i = messages.length - 1;i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (!msg || typeof msg.content !== "string")
-      continue;
-    count += countMatchingTrackerBlocksInMessage(msg.content);
-    if (count >= maxNeeded)
-      return count;
-  }
-  return count;
-}
-function buildTrackerInjectionBlock(entries) {
-  if (entries.length === 1) {
-    return `Previous tracker state:
-${formatTrackerForPrompt(entries[0].payload)}`;
-  }
-  const snapshots = entries.map((entry, index) => `Snapshot ${index + 1}:
-${formatTrackerForPrompt(entry.payload)}`).join(`
-
-`);
-  return `Previous tracker states (oldest \u2192 newest):
-
-${snapshots}`;
-}
-function withTrailingDirective(messages, directive) {
-  if (!directive)
-    return messages;
-  const injected = messages.slice();
-  injected.splice(Math.max(0, injected.length - 1), 0, { role: "system", content: directive });
-  return injected;
 }
 var interceptorRegistered = false;
 function tryRegisterInterceptor() {
