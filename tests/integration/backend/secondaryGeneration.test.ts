@@ -120,7 +120,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; targetHistoryPayload?: string; retainTrackerCount?: number; sysPrompt?: string } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; targetHistoryPayload?: string; retainTrackerCount?: number; sysPrompt?: string; regenerate?: "normal" | "force" } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -175,7 +175,17 @@ async function runGeneration(
       terminalNotification = null;
       resolve(notification);
     };
-    handlers.get("GENERATION_ENDED")?.({ chatId, messageId }, userId);
+    if (options.regenerate) {
+      if (!frontendHandler) throw new Error("Frontend handler missing");
+      void frontendHandler({
+        type: "regenerate_secondary_tracker",
+        chatId,
+        messageId,
+        forceCharacterContext: options.regenerate === "force",
+      }, userId);
+    } else {
+      handlers.get("GENERATION_ENDED")?.({ chatId, messageId }, userId);
+    }
   });
   return { result, message };
 }
@@ -398,6 +408,53 @@ describe("secondary generation flow", () => {
     expect(prompt).not.toContain("Personality: Patient");
     expect(prompt).not.toContain("Scenario: Forest camp");
     expect(prompt).toContain("Stable baseline traits already present in the previous tracker are authoritative.");
+  });
+
+  test("forced character regeneration refreshes card context even without a preset marker", async () => {
+    const oldTracker = '{"worldData":{},"characters":[{"name":"Ayla","ap":50}]}';
+    const { result, message } = await runGeneration(['{"worldData":{},"characters":[{"name":"Ayla","ap":80}]}'], {
+      initialContent: `Narrative beat\n\n<tracker type="sim">${oldTracker}</tracker>`,
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla","ap":70}]}',
+      retainTrackerCount: 1,
+      sysPrompt: "Track {{char}}.",
+      regenerate: "force",
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Track Ayla.");
+    expect(prompt).toContain("Description: Tall elf");
+    expect(prompt).toContain("Personality: Patient");
+    expect(prompt).toContain("Scenario: Forest camp");
+    expect(prompt).toContain("ap: 70");
+    expect(prompt).toContain("manual character-card refresh");
+    expect(prompt).toContain("update stable traits when the character-card context above conflicts");
+    expect(message.content).toContain('"ap": 80');
+    expect(message.content).not.toContain('"ap": 50');
+  });
+
+  test("forced regeneration expands the preset context marker once", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla"}]}',
+      retainTrackerCount: 1,
+      sysPrompt: "Track {{char}}. {{sim_character_context}}",
+      regenerate: "force",
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].messages[0].content.split("Description: Tall elf")).toHaveLength(2);
+  });
+
+  test("ordinary regeneration does not force character-card context", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla"}]}',
+      retainTrackerCount: 1,
+      sysPrompt: "Track {{char}}. {{sim_character_context}}",
+      regenerate: "normal",
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].messages[0].content).not.toContain("Description: Tall elf");
   });
 
   test("Retain 0 omits prior tracker content without re-injecting character context", async () => {

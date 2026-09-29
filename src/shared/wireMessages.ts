@@ -8,7 +8,7 @@ export type FrontendToBackendMessage =
   | { type: "get_connections" }
   | { type: "get_latest_tracker"; chatId: string }
   | { type: "trigger_secondary_generation"; chatId: string; messageId: string }
-  | { type: "regenerate_secondary_tracker"; chatId: string; messageId?: string }
+  | { type: "regenerate_secondary_tracker"; chatId: string; messageId?: string; forceCharacterContext?: boolean }
   | { type: "delete_preset"; templateId: string }
   | { type: "import_preset_file"; fileName: string; text: string }
   | { type: "remove_inline_pack"; index: number }

@@ -91,16 +91,21 @@ export function createFrontendControls(deps: {
   const hasPermission = (name: string): boolean => deps.readGrantedPermissions().includes(name);
 
   const updateRegenerateButton = () => {
-    const btn = byId<HTMLButtonElement>("sst-lumi-llm-regenerate");
-    if (!btn) return;
     const llmAvailable =
       hasPermission("generation") && hasPermission("chat_mutation") && hasPermission("generation_parameters");
-    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
-    btn.title = btn.disabled
-      ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled"
-      : deps.readLatestTrackerMessageId()
-        ? "Strip the existing tracker block and ask the secondary LLM to produce a fresh one"
-        : "Run the secondary LLM against the latest assistant message";
+    const disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
+    for (const [id, forced] of [["sst-lumi-llm-regenerate", false], ["sst-lumi-llm-regenerate-character", true]] as const) {
+      const btn = byId<HTMLButtonElement>(id);
+      if (!btn) continue;
+      btn.disabled = disabled;
+      btn.title = disabled
+        ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled"
+        : forced
+          ? "Regenerate with fresh character-card context, even when the preset does not include its context macro"
+          : deps.readLatestTrackerMessageId()
+            ? "Strip the existing tracker block and ask the secondary LLM to produce a fresh one"
+            : "Run the secondary LLM against the latest assistant message";
+    }
   };
 
   const updatePermissionGatedControls = () => {

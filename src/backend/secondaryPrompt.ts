@@ -10,6 +10,7 @@ export function buildSecondaryPrompt(options: {
   identifier: string;
   stripHTML: boolean;
   trackerFormat: "json" | "yaml";
+  forceCharacterContext?: boolean;
 }) {
   const tagRe = buildTrackerTagRegex(options.tagName, "ig");
   const fenceRe = buildTrackerFenceRegex(options.identifier, "gi");
@@ -40,7 +41,12 @@ export function buildSecondaryPrompt(options: {
     conversationText += `${msg.role === "user" ? "User" : "Character"}: ${msg.content}\n\n`;
   }
   const hasHistory = historicalTrackers.length > 0;
-  conversationText += `\nBased on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${options.trackerFormat.toUpperCase()} data (without code fences or backticks). ${hasHistory ? "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes — keep unchanged fields stable so the tracker progression stays consistent. " : ""}Output ONLY the ${options.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
+  const historyInstruction = hasHistory
+    ? options.forceCharacterContext
+      ? "Treat the most recent prior state as the baseline for unrelated fields, but update stable traits when the character-card context above conflicts with it. "
+      : "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes — keep unchanged fields stable so the tracker progression stays consistent. "
+    : "";
+  conversationText += `\nBased on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${options.trackerFormat.toUpperCase()} data (without code fences or backticks). ${historyInstruction}Output ONLY the ${options.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
 
   return { cleanedMessages, conversationText };
 }

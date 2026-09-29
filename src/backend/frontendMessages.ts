@@ -23,7 +23,7 @@ export function createFrontendMessageHandler(deps: {
   sendTagInterceptorConfig: (userId: string) => void;
   sendConfigError: (userId: string, message: string, operation?: "load" | "save") => void;
   hasPermission: (name: string) => boolean;
-  enqueueSecondaryGeneration: (chatId: string, messageId: string) => Promise<void>;
+  enqueueSecondaryGeneration: (chatId: string, messageId: string, forceCharacterContext?: boolean) => Promise<void>;
   extractTrackerPayloadFromMessage: (content: string) => string | null;
   forgetChatTracker: (chatId: string | null, messageId: string | null) => void;
   rehydrateChatTrackerHistory: (chatId: string | null) => Promise<void>;
@@ -183,7 +183,7 @@ return async (payload: unknown, userId: string) => {
       spindle.log.info(`Regenerate: message ${target.id} in chat ${chatId} has no tracker yet — generating fresh`);
     }
 
-    void enqueueSecondaryGeneration(chatId, target.id);
+    void enqueueSecondaryGeneration(chatId, target.id, message.forceCharacterContext === true);
     return;
   }
 

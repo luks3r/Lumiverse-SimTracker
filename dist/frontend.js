@@ -12897,7 +12897,10 @@ var PANEL_HTML = `
         <label>Temperature<input id="sst-lumi-llm-temp" type="number" min="0" max="2" step="0.1" value="0.7" /></label>
         <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-json-format" type="checkbox" />Request JSON output format (JSON trackers only; provider must support it)</label>
         <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-strip" type="checkbox" checked />Strip structural HTML from context</label>
-        <button id="sst-lumi-llm-regenerate" type="button" class="sst-lumi-llm-regenerate" disabled>Regenerate Last Tracker</button>
+        <div class="sst-lumi-llm-actions">
+          <button id="sst-lumi-llm-regenerate" type="button" class="sst-lumi-llm-regenerate" disabled>Regenerate Last Tracker</button>
+          <button id="sst-lumi-llm-regenerate-character" type="button" class="sst-lumi-llm-regenerate" disabled>Regenerate with Character Context</button>
+        </div>
         <div id="sst-lumi-llm-status" class="sst-lumi-llm-status"></div>
       </div>
     </details>
@@ -12964,6 +12967,7 @@ var PANEL_CSS = `
   .sst-lumi-llm-controls label { font-size: 11px; color: var(--lumiverse-text-muted); display: grid; gap: 5px; }
   .sst-lumi-llm-controls input[type="text"], .sst-lumi-llm-controls input[type="password"], .sst-lumi-llm-controls input[type="number"], .sst-lumi-llm-controls select { font-size: 12px; padding: 6px 8px; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: var(--lumiverse-fill-subtle); color: var(--lumiverse-text); }
   .sst-lumi-llm-model-mount { width: 100%; }
+  .sst-lumi-llm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .sst-tracker-generating { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 0; padding: 4px 10px; font-size: 11px; line-height: 1.4; color: var(--lumiverse-text-muted); background: color-mix(in srgb, var(--lumiverse-accent, #7c6aef) 12%, transparent); border: 1px solid color-mix(in srgb, var(--lumiverse-accent, #7c6aef) 30%, transparent); border-radius: 999px; }
   .sst-tracker-generating::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--lumiverse-accent, #7c6aef); animation: sst-tracker-generating-pulse 1.2s ease-in-out infinite; }
   @keyframes sst-tracker-generating-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
@@ -19978,12 +19982,15 @@ function createFrontendControls(deps) {
   };
   const hasPermission = (name) => deps.readGrantedPermissions().includes(name);
   const updateRegenerateButton = () => {
-    const btn = byId("sst-lumi-llm-regenerate");
-    if (!btn)
-      return;
     const llmAvailable = hasPermission("generation") && hasPermission("chat_mutation") && hasPermission("generation_parameters");
-    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
-    btn.title = btn.disabled ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled" : deps.readLatestTrackerMessageId() ? "Strip the existing tracker block and ask the secondary LLM to produce a fresh one" : "Run the secondary LLM against the latest assistant message";
+    const disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
+    for (const [id, forced] of [["sst-lumi-llm-regenerate", false], ["sst-lumi-llm-regenerate-character", true]]) {
+      const btn = byId(id);
+      if (!btn)
+        continue;
+      btn.disabled = disabled;
+      btn.title = disabled ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled" : forced ? "Regenerate with fresh character-card context, even when the preset does not include its context macro" : deps.readLatestTrackerMessageId() ? "Strip the existing tracker block and ask the secondary LLM to produce a fresh one" : "Run the secondary LLM against the latest assistant message";
+    }
   };
   const updatePermissionGatedControls = () => {
     const llmSection = byId("sst-lumi-llm-section");
@@ -20877,20 +20884,22 @@ function registerSettingsActions(deps) {
       value: ""
     });
   });
-  const llmRegenerateBtn = byId("sst-lumi-llm-regenerate");
-  llmRegenerateBtn?.addEventListener("click", () => {
+  const requestRegeneration = (forceCharacterContext) => {
     const chatId = deps.readCurrentChatId();
     if (!chatId) {
       setLLMStatus("Open a chat first to regenerate", "error");
       return;
     }
-    setLLMStatus("Regenerating tracker...", "generating");
+    setLLMStatus(forceCharacterContext ? "Regenerating with character context..." : "Regenerating tracker...", "generating");
     ctx.sendToBackend({
       type: "regenerate_secondary_tracker",
       chatId,
-      messageId: deps.readLatestTrackerMessageId() ?? undefined
+      messageId: deps.readLatestTrackerMessageId() ?? undefined,
+      ...forceCharacterContext ? { forceCharacterContext: true } : {}
     });
-  });
+  };
+  byId("sst-lumi-llm-regenerate")?.addEventListener("click", () => requestRegeneration(false));
+  byId("sst-lumi-llm-regenerate-character")?.addEventListener("click", () => requestRegeneration(true));
 }
 
 // src/frontend/frontendTemplateHelpers.ts

@@ -62,6 +62,7 @@ type SecondaryJob = {
   userId: string | null;
   config: TrackerConfig;
   preset: TemplatePreset;
+  forceCharacterContext: boolean;
 };
 // ── Secondary LLM Generation ─────────────────────────────────────────
 //
@@ -74,7 +75,7 @@ type SecondaryJob = {
 let secondaryGenerationChain: Promise<void> = Promise.resolve();
 const queuedSecondaryJobs = new Set<string>();
 
-function enqueueSecondaryGeneration(chatId: string, messageId: string): Promise<void> {
+function enqueueSecondaryGeneration(chatId: string, messageId: string, forceCharacterContext = false): Promise<void> {
   const key = `${chatId}::${messageId}`;
   // Drop duplicate requests for the same (chat, message) while one is queued.
   // The in-flight job's pre-flight `extractTrackerPayloadFromMessage` check
@@ -87,6 +88,7 @@ function enqueueSecondaryGeneration(chatId: string, messageId: string): Promise<
     userId: deps.readActiveUserId(),
     config: { ...deps.readConfig() },
     preset: getActivePreset(),
+    forceCharacterContext,
   };
   secondaryGenerationChain = secondaryGenerationChain
     .catch(() => undefined)
@@ -145,7 +147,7 @@ async function commitTrackerAppend(
 }
 
 async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void> {
-  const { chatId, messageId: targetMessageId, config, preset, userId } = job;
+  const { chatId, messageId: targetMessageId, config, preset, userId, forceCharacterContext } = job;
   if (!config.useSecondaryLLM) return;
   if (!hasPermission("generation")) {
     spindle.log.warn("Secondary LLM generation requires 'generation' permission");
@@ -212,7 +214,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     // missing cors_proxy permission, timeout, API error, low confidence —
     // falls through to the full path, which is why the provider-specific
     // pre-flight checks now live below this block.
-    if (config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
+    if (!forceCharacterContext && config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
       const previousPayload = historicalTrackers.length > 0
         ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1])
         : null;
@@ -304,6 +306,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       sysPrompt: preset.sysPrompt || "",
       formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
       hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId),
+      forceCharacterContext,
     });
 
     const { cleanedMessages, conversationText } = buildSecondaryPrompt({
@@ -314,6 +317,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       identifier,
       stripHTML: config.secondaryLLMStripHTML,
       trackerFormat: config.trackerFormat,
+      forceCharacterContext,
     });
 
     const llmMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
@@ -394,7 +398,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     // every subsequent generation via history and macros. Verification
     // fails open: if TypeSafe is unreachable, append anyway (the full
     // path's pre-existing behavior).
-    if (config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
+    if (!forceCharacterContext && config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
       const previousPayload = parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]);
       const narrative = cleanedMessages.map((msg) => `${msg.role === "user" ? "User" : "Character"}: ${msg.content}`).join("\n\n");
       const verifyPlan = previousPayload

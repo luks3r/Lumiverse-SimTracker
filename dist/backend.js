@@ -13655,8 +13655,9 @@ ${formatTrackerForPrompt(snap)}
 `;
   }
   const hasHistory = historicalTrackers.length > 0;
+  const historyInstruction = hasHistory ? options.forceCharacterContext ? "Treat the most recent prior state as the baseline for unrelated fields, but update stable traits when the character-card context above conflicts with it. " : "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes \u2014 keep unchanged fields stable so the tracker progression stays consistent. " : "";
   conversationText += `
-Based on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${options.trackerFormat.toUpperCase()} data (without code fences or backticks). ${hasHistory ? "Treat the most recent prior state as the baseline and mutate only the fields that the new narrative actually changes \u2014 keep unchanged fields stable so the tracker progression stays consistent. " : ""}Output ONLY the ${options.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
+Based on the above conversation${hasHistory ? " and the previous tracker state(s) above" : ""}, generate ONLY the raw ${options.trackerFormat.toUpperCase()} data (without code fences or backticks). ${historyInstruction}Output ONLY the ${options.trackerFormat.toUpperCase()} structure directly, with no comments or acknowledgements of any instructions.`;
   return { cleanedMessages, conversationText };
 }
 
@@ -13670,12 +13671,18 @@ var CHARACTER_CONTEXT = [
 ].join(`
 `);
 var BASELINE_POLICY = "Stable baseline traits already present in the previous tracker are authoritative. Do not re-infer or re-randomize them unless new narrative evidence contradicts them. When character-card context is provided, use it only to initialize missing stable traits, not as current scene state.";
+var FORCED_CONTEXT_POLICY = "This is a manual character-card refresh. Use the character-card context to update stable traits that conflict with the previous tracker. Preserve unrelated tracker values, and derive current scene state from the recent narrative.";
 async function resolveSecondaryPresetPrompt(options) {
-  const template = options.sysPrompt.replace(/\{\{sim_character_context\}\}/g, options.hasKnownPriorTracker ? "" : CHARACTER_CONTEXT).replace(/\{\{sim_format\}\}/g, options.formatExample).replace(/\{\{charDescription\}\}/g, "{{description}}").replace(/\{\{charPersonality\}\}/g, "{{personality}}").replace(/\{\{charScenario\}\}/g, "{{scenario}}");
+  const includeContext = options.forceCharacterContext || !options.hasKnownPriorTracker;
+  const context = options.forceCharacterContext ? CHARACTER_CONTEXT.replace("initialization only", "manual refresh") : CHARACTER_CONTEXT;
+  const hasContextMarker = options.sysPrompt.includes("{{sim_character_context}}");
+  const template = (options.forceCharacterContext && !hasContextMarker ? `${options.sysPrompt}
+
+${context}` : options.sysPrompt).replace(/\{\{sim_character_context\}\}/g, includeContext ? context : "").replace(/\{\{sim_format\}\}/g, options.formatExample).replace(/\{\{charDescription\}\}/g, "{{description}}").replace(/\{\{charPersonality\}\}/g, "{{personality}}").replace(/\{\{charScenario\}\}/g, "{{scenario}}");
   const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, commit: false });
   return `${text}
 
-${BASELINE_POLICY}`;
+${options.forceCharacterContext ? FORCED_CONTEXT_POLICY : BASELINE_POLICY}`;
 }
 
 // src/backend/secondaryHistory.ts
@@ -14121,7 +14128,7 @@ function createSecondaryGeneration(deps) {
   } = deps;
   let secondaryGenerationChain = Promise.resolve();
   const queuedSecondaryJobs = new Set;
-  function enqueueSecondaryGeneration(chatId, messageId) {
+  function enqueueSecondaryGeneration(chatId, messageId, forceCharacterContext = false) {
     const key = `${chatId}::${messageId}`;
     if (queuedSecondaryJobs.has(key))
       return secondaryGenerationChain;
@@ -14131,7 +14138,8 @@ function createSecondaryGeneration(deps) {
       messageId,
       userId: deps.readActiveUserId(),
       config: { ...deps.readConfig() },
-      preset: getActivePreset()
+      preset: getActivePreset(),
+      forceCharacterContext
     };
     secondaryGenerationChain = secondaryGenerationChain.catch(() => {
       return;
@@ -14167,7 +14175,7 @@ ${trackerBlock}`;
     }, userId || undefined);
   }
   async function generateTrackerWithSecondaryLLM(job) {
-    const { chatId, messageId: targetMessageId, config, preset, userId } = job;
+    const { chatId, messageId: targetMessageId, config, preset, userId, forceCharacterContext } = job;
     if (!config.useSecondaryLLM)
       return;
     if (!hasPermission("generation")) {
@@ -14201,7 +14209,7 @@ ${trackerBlock}`;
         getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
         extractTrackerPayloadFromMessage
       });
-      if (config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
+      if (!forceCharacterContext && config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
         const previousPayload = historicalTrackers.length > 0 ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]) : null;
         if (previousPayload) {
           let fastLaneMessage = targetMessage.content.replace(buildTrackerTagRegex(tagName, "ig"), "").replace(buildTrackerFenceRegex(identifier, "gi"), "");
@@ -14263,7 +14271,8 @@ ${trackerBlock}`;
         chatId,
         sysPrompt: preset.sysPrompt || "",
         formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
-        hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId)
+        hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId),
+        forceCharacterContext
       });
       const { cleanedMessages, conversationText } = buildSecondaryPrompt({
         processedPrompt,
@@ -14272,7 +14281,8 @@ ${trackerBlock}`;
         tagName,
         identifier,
         stripHTML: config.secondaryLLMStripHTML,
-        trackerFormat: config.trackerFormat
+        trackerFormat: config.trackerFormat,
+        forceCharacterContext
       });
       const llmMessages = [
         { role: "user", content: conversationText }
@@ -14324,7 +14334,7 @@ ${trackerBlock}`;
         spindle2.sendToFrontend({ type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId }, userId || undefined);
         return;
       }
-      if (config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
+      if (!forceCharacterContext && config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
         const previousPayload = parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]);
         const narrative = cleanedMessages.map((msg) => `${msg.role === "user" ? "User" : "Character"}: ${msg.content}`).join(`
 
@@ -14634,7 +14644,7 @@ function createFrontendMessageHandler(deps) {
       } else {
         spindle2.log.info(`Regenerate: message ${target.id} in chat ${chatId} has no tracker yet \u2014 generating fresh`);
       }
-      enqueueSecondaryGeneration(chatId, target.id);
+      enqueueSecondaryGeneration(chatId, target.id, message.forceCharacterContext === true);
       return;
     }
     if (message.type === "get_latest_tracker") {

@@ -176,14 +176,13 @@ export function registerSettingsActions(deps: {
     });
   });
 
-  const llmRegenerateBtn = byId<HTMLButtonElement>("sst-lumi-llm-regenerate");
-  llmRegenerateBtn?.addEventListener("click", () => {
+  const requestRegeneration = (forceCharacterContext: boolean) => {
     const chatId = deps.readCurrentChatId();
     if (!chatId) {
       setLLMStatus("Open a chat first to regenerate", "error");
       return;
     }
-    setLLMStatus("Regenerating tracker...", "generating");
+    setLLMStatus(forceCharacterContext ? "Regenerating with character context..." : "Regenerating tracker...", "generating");
     ctx.sendToBackend({
       type: "regenerate_secondary_tracker",
       chatId,
@@ -191,6 +190,9 @@ export function registerSettingsActions(deps: {
       // falls back to the latest assistant message when this is absent
       // or stale, so a missing hint is fine.
       messageId: deps.readLatestTrackerMessageId() ?? undefined,
+      ...(forceCharacterContext ? { forceCharacterContext: true } : {}),
     } satisfies FrontendToBackendMessage);
-  });
+  };
+  byId<HTMLButtonElement>("sst-lumi-llm-regenerate")?.addEventListener("click", () => requestRegeneration(false));
+  byId<HTMLButtonElement>("sst-lumi-llm-regenerate-character")?.addEventListener("click", () => requestRegeneration(true));
 }
