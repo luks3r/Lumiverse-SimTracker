@@ -13679,7 +13679,7 @@ async function resolveSecondaryPresetPrompt(options) {
   const template = (options.forceCharacterContext && !hasContextMarker ? `${options.sysPrompt}
 
 ${context}` : options.sysPrompt).replace(/\{\{sim_character_context\}\}/g, includeContext ? context : "").replace(/\{\{sim_format\}\}/g, options.formatExample).replace(/\{\{charDescription\}\}/g, "{{description}}").replace(/\{\{charPersonality\}\}/g, "{{personality}}").replace(/\{\{charScenario\}\}/g, "{{scenario}}");
-  const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, commit: false });
+  const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, userId: options.userId, commit: false });
   return `${text}
 
 ${options.forceCharacterContext ? FORCED_CONTEXT_POLICY : BASELINE_POLICY}`;
@@ -14266,9 +14266,12 @@ ${trackerBlock}`;
         return;
       }
       const { connection, provider } = route;
+      if (!userId)
+        throw new Error("Secondary LLM macro resolution requires a user id");
       const processedPrompt = await resolveSecondaryPresetPrompt({
         spindle: spindle2,
         chatId,
+        userId,
         sysPrompt: preset.sysPrompt || "",
         formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
         hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId),

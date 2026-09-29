@@ -300,9 +300,11 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     }
     const { connection, provider } = route;
 
+    if (!userId) throw new Error("Secondary LLM macro resolution requires a user id");
     const processedPrompt = await resolveSecondaryPresetPrompt({
       spindle,
       chatId,
+      userId,
       sysPrompt: preset.sysPrompt || "",
       formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
       hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId),

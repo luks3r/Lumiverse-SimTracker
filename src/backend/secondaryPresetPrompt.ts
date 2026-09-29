@@ -14,6 +14,7 @@ const FORCED_CONTEXT_POLICY = "This is a manual character-card refresh. Use the 
 export async function resolveSecondaryPresetPrompt(options: {
   spindle: Pick<SpindleAPI, "macros">;
   chatId: string;
+  userId: string;
   sysPrompt: string;
   formatExample: string;
   hasKnownPriorTracker: boolean;
@@ -32,6 +33,6 @@ export async function resolveSecondaryPresetPrompt(options: {
     .replace(/\{\{charDescription\}\}/g, "{{description}}")
     .replace(/\{\{charPersonality\}\}/g, "{{personality}}")
     .replace(/\{\{charScenario\}\}/g, "{{scenario}}");
-  const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, commit: false });
+  const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, userId: options.userId, commit: false });
   return `${text}\n\n${options.forceCharacterContext ? FORCED_CONTEXT_POLICY : BASELINE_POLICY}`;
 }

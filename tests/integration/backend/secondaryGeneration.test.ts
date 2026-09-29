@@ -389,7 +389,7 @@ describe("secondary generation flow", () => {
     expect(prompt).toContain("Personality: Patient");
     expect(prompt).toContain("Scenario: Forest camp");
     expect(prompt).not.toContain("{{sim_character_context}}");
-    expect(macroResolutions[0].options).toMatchObject({ chatId: expect.any(String), commit: false });
+    expect(macroResolutions[0].options).toMatchObject({ chatId: expect.any(String), userId: expect.any(String), commit: false });
   });
 
   test("retained tracker replaces repeated card context as the baseline", async () => {
