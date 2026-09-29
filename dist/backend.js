@@ -12993,104 +12993,6 @@ function formatTrackerForPrompt(raw) {
 `);
 }
 
-// src/backend/trackerExample.ts
-function setDeep(target, path, value) {
-  const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0)
-    return;
-  let cursor = target;
-  for (let i = 0;i < parts.length - 1; i += 1) {
-    const key = parts[i];
-    const existing = cursor[key];
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-      cursor[key] = {};
-    }
-    cursor = cursor[key];
-  }
-  cursor[parts[parts.length - 1]] = value;
-}
-function inferExampleValue(key, description) {
-  const k = key.toLowerCase();
-  const d = description.toLowerCase();
-  if (k === "name")
-    return "Character Name";
-  if (k.includes("date") && k.includes("time"))
-    return "YYYY-MM-DD HH:MM";
-  if (k.includes("date"))
-    return "YYYY-MM-DD";
-  if (k.includes("time"))
-    return "HH:MM";
-  if (k.includes("bg") || k.includes("color"))
-    return "HEX_COLOR";
-  if (/[[(](?:number|integer|int|float)[\])]/.test(d))
-    return 0;
-  if (/[[(](?:boolean|bool)[\])]/.test(d))
-    return false;
-  if (/[[(](?:string|text)[\])]/.test(d))
-    return "";
-  if (/[[(](?:array|list)[\])]/.test(d)) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  if (/\b\d+\s*=/.test(d))
-    return 0;
-  if (/-?\d+\s*(?:to|[-\u2013\u2014])\s*-?\d+/.test(d))
-    return 0;
-  if (k === "preg" || k === "inactive" || k === "alive" || k === "dead")
-    return false;
-  if (/\btrue\/false\b|\bboolean\b/.test(d))
-    return false;
-  if (k.includes("icon") || k.includes("thought") || k.includes("status"))
-    return "";
-  if (d.includes("array") || d.includes("[{")) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  const numericKeySignals = [
-    "ap",
-    "dp",
-    "tp",
-    "cp",
-    "hp",
-    "mp",
-    "xp",
-    "sp",
-    "affection",
-    "desire",
-    "trust",
-    "contempt",
-    "affinity",
-    "health",
-    "vitality",
-    "level",
-    "turn",
-    "count",
-    "days",
-    "months",
-    "years",
-    "hours",
-    "minutes",
-    "score",
-    "points",
-    "rating",
-    "index",
-    "react",
-    "reason"
-  ];
-  if (numericKeySignals.some((term) => k.includes(term)))
-    return 0;
-  if (d.includes("number"))
-    return 0;
-  if (k.endsWith("s") && !k.endsWith("us") && !k.endsWith("ss") && !k.endsWith("is")) {
-    if (k.includes("connection"))
-      return [{ name: "Target", affinity: 0 }];
-    return [];
-  }
-  return "";
-}
-
 // src/shared/trackerConfig.ts
 var FERTILITY_CYCLE_BIAS_VALUES = [
   "random",
@@ -13194,281 +13096,6 @@ function extractTrackerTagLoose(message, tagName) {
   return match ? (match[2] || "").trim() || null : null;
 }
 
-// src/backend/trackerCommandText.ts
-function buildTemplateExampleData(preset) {
-  const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
-  const worldData = {
-    current_date: "YYYY-MM-DD",
-    current_time: "HH:MM"
-  };
-  const character = {
-    name: "Character Name"
-  };
-  for (const field of fields) {
-    const key = typeof field?.key === "string" ? field.key.trim() : "";
-    if (!key)
-      continue;
-    const description = typeof field?.description === "string" ? field.description : "";
-    const sample = inferExampleValue(key, description);
-    if (key.startsWith("worldData.")) {
-      setDeep(worldData, key.slice("worldData.".length), sample);
-      continue;
-    }
-    const normalizedKey = key.replace(/^character\./i, "").replace(/^characters\[\]\./i, "");
-    if (!normalizedKey || normalizedKey.toLowerCase() === "name")
-      continue;
-    setDeep(character, normalizedKey, sample);
-  }
-  return {
-    worldData,
-    characters: [character]
-  };
-}
-function formatTrackerPayload(data, format, identifier, tagName) {
-  const safeTagName = sanitizeTagName(tagName);
-  const safeIdentifier = sanitizeIdentifier(identifier);
-  const body = format === "yaml" ? stringify3(data).trimEnd() : JSON.stringify(data, null, 2);
-  return `<${safeTagName} type="${safeIdentifier}">
-${body}
-</${safeTagName}>`;
-}
-function replaceTrackerBlock(content, identifier, replacementBlock, tagName) {
-  const tagRe = buildTrackerTagRegex(tagName, "ig");
-  const desiredType = sanitizeIdentifier(identifier);
-  let replaced = false;
-  const withTag = content.replace(tagRe, (full, attrsRaw) => {
-    const attrs = parseTagAttributes(String(attrsRaw || ""));
-    const foundType = sanitizeIdentifier(attrs.type || "");
-    if (foundType && foundType !== desiredType)
-      return full;
-    if (replaced)
-      return full;
-    replaced = true;
-    return replacementBlock;
-  });
-  if (replaced)
-    return withTag;
-  const re = buildTrackerFenceRegex(identifier, "i");
-  return withTag.replace(re, replacementBlock);
-}
-
-// src/shared/fertilityCycleHint.ts
-function pickInitialCycleState(bias) {
-  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
-  switch (bias) {
-    case "menstruating": {
-      const day = roll(1, 5);
-      return { day, description: `menstruating (cycle_stage_id 1)` };
-    }
-    case "start_follicular": {
-      const day = roll(6, 10);
-      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
-    }
-    case "close_ovulation": {
-      const day = roll(11, 13);
-      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
-    }
-    case "ovulating": {
-      const day = roll(14, 16);
-      return { day, description: `ovulating (cycle_stage_id 3)` };
-    }
-    case "start_luteal": {
-      const day = roll(17, 21);
-      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
-    }
-    case "end_luteal": {
-      const day = roll(24, 28);
-      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
-    }
-    case "random":
-    default: {
-      const day = roll(1, 28);
-      return { day, description: "" };
-    }
-  }
-}
-function buildFirstMessageHint(bias) {
-  const { day, description } = pickInitialCycleState(bias);
-  if (!description && bias !== "random")
-    return "";
-  const qualifier = description ? `, ${description}` : "";
-  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
-}
-
-// src/backend/presetSanitizers.ts
-function upgradeLegacyImportedPreset(preset) {
-  const html = preset.htmlTemplate || "";
-  const isMissingAttire = !html.includes("nw-attire");
-  const bundled = getTemplatePresetById("narrative-weave-simtracker");
-  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
-  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
-  const isOutdatedRevision = importedRevision < bundledRevision;
-  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
-  if (!isLegacyNarrativeWeave)
-    return preset;
-  return {
-    ...preset,
-    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
-    ...isMissingAttire || isOutdatedRevision ? {
-      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
-      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
-      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
-      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
-      customFields: bundled.customFields || preset.customFields,
-      extSettings: bundled.extSettings || preset.extSettings
-    } : {}
-  };
-}
-function sanitizePresetArray(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
-    const p = item;
-    return upgradeLegacyImportedPreset({
-      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
-      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
-      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
-      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-      customFields: Array.isArray(p.customFields) ? p.customFields : [],
-      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-    });
-  });
-}
-function sanitizeSinglePreset(value, fallbackId) {
-  if (!value || typeof value !== "object")
-    return null;
-  const p = value;
-  return {
-    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
-    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
-    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
-    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
-    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
-    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
-    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
-    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
-    customFields: Array.isArray(p.customFields) ? p.customFields : [],
-    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
-  };
-}
-function sanitizeInlinePacks(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter((item) => item && typeof item === "object");
-}
-
-// src/backend/backendConfig.ts
-function sanitizeTrackerFormat(value) {
-  return value === "yaml" ? "yaml" : "json";
-}
-function sanitizeTemplateId(value) {
-  if (typeof value !== "string")
-    return DEFAULT_CONFIG.templateId;
-  const trimmed = value.trim();
-  return trimmed || DEFAULT_CONFIG.templateId;
-}
-function sanitizeRetainCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.retainTrackerCount;
-  return Math.max(0, Math.min(20, Math.floor(value)));
-}
-function sanitizeInlineEnabled(value) {
-  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
-}
-function sanitizeBool(value, fallback) {
-  return typeof value === "boolean" ? value : fallback;
-}
-function sanitizeStr(value, fallback) {
-  return typeof value === "string" ? value.trim() : fallback;
-}
-function sanitizeFertilityCycleBias(value) {
-  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
-}
-function sanitizeSecondaryLLMModel(value, fallback) {
-  const raw = sanitizeStr(value, fallback);
-  const lowered = raw.toLowerCase();
-  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
-    return "";
-  }
-  return raw;
-}
-function sanitizeMessageCount(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMMessageCount;
-  return Math.max(1, Math.min(50, Math.floor(value)));
-}
-function sanitizeTemperature(value) {
-  if (typeof value !== "number" || Number.isNaN(value))
-    return DEFAULT_CONFIG.secondaryLLMTemperature;
-  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
-}
-function sanitizeTypeSafeModel(value) {
-  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
-  return model || DEFAULT_CONFIG.typeSafeModel;
-}
-function sanitizeConfidenceFloor(value) {
-  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
-  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
-}
-function normalizeStoredConfig(parsed) {
-  return {
-    trackerTagName: sanitizeTagName(parsed.trackerTagName),
-    codeBlockIdentifier: sanitizeIdentifier(parsed.codeBlockIdentifier),
-    hideSimBlocks: sanitizeBool(parsed.hideSimBlocks, DEFAULT_CONFIG.hideSimBlocks),
-    templateId: sanitizeTemplateId(parsed.templateId),
-    trackerFormat: sanitizeTrackerFormat(parsed.trackerFormat),
-    retainTrackerCount: sanitizeRetainCount(parsed.retainTrackerCount),
-    enableInlineTemplates: sanitizeInlineEnabled(parsed.enableInlineTemplates),
-    userPresets: sanitizePresetArray(parsed.userPresets),
-    inlinePacks: sanitizeInlinePacks(parsed.inlinePacks),
-    useSecondaryLLM: sanitizeBool(parsed.useSecondaryLLM, DEFAULT_CONFIG.useSecondaryLLM),
-    secondaryLLMConnectionId: sanitizeStr(parsed.secondaryLLMConnectionId, DEFAULT_CONFIG.secondaryLLMConnectionId),
-    secondaryLLMModel: sanitizeSecondaryLLMModel(parsed.secondaryLLMModel, DEFAULT_CONFIG.secondaryLLMModel),
-    secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
-    secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
-    secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
-    fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
-    typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
-    typeSafeApiKey: "",
-    typeSafeModel: sanitizeTypeSafeModel(parsed.typeSafeModel),
-    typeSafeQuickAppend: sanitizeBool(parsed.typeSafeQuickAppend, DEFAULT_CONFIG.typeSafeQuickAppend),
-    typeSafeVerify: sanitizeBool(parsed.typeSafeVerify, DEFAULT_CONFIG.typeSafeVerify),
-    typeSafeConception: sanitizeBool(parsed.typeSafeConception, DEFAULT_CONFIG.typeSafeConception),
-    typeSafeConfidenceFloor: sanitizeConfidenceFloor(parsed.typeSafeConfidenceFloor)
-  };
-}
-function mergeTrackerConfig(config, incoming) {
-  return {
-    trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
-    codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),
-    hideSimBlocks: sanitizeBool(incoming?.hideSimBlocks ?? config.hideSimBlocks, config.hideSimBlocks),
-    templateId: sanitizeTemplateId(incoming?.templateId ?? config.templateId),
-    trackerFormat: sanitizeTrackerFormat(incoming?.trackerFormat ?? config.trackerFormat),
-    retainTrackerCount: sanitizeRetainCount(incoming?.retainTrackerCount ?? config.retainTrackerCount),
-    enableInlineTemplates: sanitizeInlineEnabled(incoming?.enableInlineTemplates ?? config.enableInlineTemplates),
-    userPresets: sanitizePresetArray(incoming?.userPresets ?? config.userPresets),
-    inlinePacks: sanitizeInlinePacks(incoming?.inlinePacks ?? config.inlinePacks),
-    useSecondaryLLM: sanitizeBool(incoming?.useSecondaryLLM ?? config.useSecondaryLLM, config.useSecondaryLLM),
-    secondaryLLMConnectionId: sanitizeStr(incoming?.secondaryLLMConnectionId ?? config.secondaryLLMConnectionId, config.secondaryLLMConnectionId),
-    secondaryLLMModel: sanitizeSecondaryLLMModel(incoming?.secondaryLLMModel ?? config.secondaryLLMModel, config.secondaryLLMModel),
-    secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
-    secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
-    secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
-    fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
-    typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
-    typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),
-    typeSafeModel: sanitizeTypeSafeModel(incoming?.typeSafeModel ?? config.typeSafeModel),
-    typeSafeQuickAppend: sanitizeBool(incoming?.typeSafeQuickAppend ?? config.typeSafeQuickAppend, config.typeSafeQuickAppend),
-    typeSafeVerify: sanitizeBool(incoming?.typeSafeVerify ?? config.typeSafeVerify, config.typeSafeVerify),
-    typeSafeConception: sanitizeBool(incoming?.typeSafeConception ?? config.typeSafeConception, config.typeSafeConception),
-    typeSafeConfidenceFloor: sanitizeConfidenceFloor(incoming?.typeSafeConfidenceFloor ?? config.typeSafeConfidenceFloor)
-  };
-}
-
 // src/backend/trackerMessageCodec.ts
 function createTrackerMessageCodec(readConfig) {
   const config = {
@@ -13569,221 +13196,6 @@ ${payload.trim()}
     return { content, replacements };
   }
   return { extractTrackerPayloadFromMessage, normalizeLegacyHiddenDivTrackers, legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload };
-}
-
-// src/backend/trackerPromptRetention.ts
-function createTrackerPromptRetention(readConfig, codec) {
-  const config = {
-    get trackerTagName() {
-      return readConfig().trackerTagName;
-    },
-    get codeBlockIdentifier() {
-      return readConfig().codeBlockIdentifier;
-    }
-  };
-  const { legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload, extractTrackerPayloadFromMessage } = codec;
-  function collectTrackerBlockRanges(content, identifier) {
-    if (!content)
-      return [];
-    const desiredType = sanitizeIdentifier(identifier);
-    const ranges = [];
-    const seenStarts = new Set;
-    const fenceRe = buildTrackerFenceRegex(identifier, "gi");
-    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
-    for (const match of content.matchAll(fenceRe)) {
-      const text = match[0] || "";
-      const start = match.index;
-      if (typeof start !== "number" || !text || seenStarts.has(start))
-        continue;
-      seenStarts.add(start);
-      ranges.push({ start, end: start + text.length });
-    }
-    for (const match of content.matchAll(tagRe)) {
-      const text = match[0] || "";
-      const start = match.index;
-      if (typeof start !== "number" || !text || seenStarts.has(start))
-        continue;
-      const attrs = parseTagAttributes(match[1] || "");
-      const foundType = sanitizeIdentifier(attrs.type || "");
-      if (foundType && foundType !== desiredType)
-        continue;
-      seenStarts.add(start);
-      ranges.push({ start, end: start + text.length });
-    }
-    for (const range of legacyHiddenDivTrackerRanges(content)) {
-      if (seenStarts.has(range.start))
-        continue;
-      seenStarts.add(range.start);
-      ranges.push(range);
-    }
-    ranges.sort((a, b) => a.start - b.start);
-    return ranges;
-  }
-  function formatTrackerBlocksInMessages(messages) {
-    let output = null;
-    for (let i = 0;i < messages.length; i += 1) {
-      const message = messages[i];
-      if (!message || typeof message.content !== "string")
-        continue;
-      const ranges = collectTrackerBlockRanges(message.content, config.codeBlockIdentifier);
-      if (ranges.length === 0)
-        continue;
-      let content = message.content;
-      let changed = false;
-      for (let j = ranges.length - 1;j >= 0; j -= 1) {
-        const range = ranges[j];
-        const block = content.slice(range.start, range.end);
-        const payload = extractTrackerPayloadFromMessage(block);
-        if (!payload)
-          continue;
-        const replacement = `Previous tracker state:
-${formatTrackerForPrompt(payload)}`;
-        content = content.slice(0, range.start) + replacement + content.slice(range.end);
-        changed = true;
-      }
-      if (!changed)
-        continue;
-      if (!output)
-        output = messages.slice();
-      output[i] = { ...message, content };
-    }
-    return output || messages;
-  }
-  function stripAllTrackerBlocks(content, identifier) {
-    if (!content)
-      return content;
-    const desiredType = sanitizeIdentifier(identifier);
-    let out = content.replace(buildTrackerFenceRegex(identifier, "gi"), "");
-    out = out.replace(buildTrackerTagRegex(config.trackerTagName, "gi"), (full, attrsRaw) => {
-      const attrs = parseTagAttributes(String(attrsRaw || ""));
-      const foundType = sanitizeIdentifier(attrs.type || "");
-      if (foundType && foundType !== desiredType)
-        return full;
-      return "";
-    });
-    out = out.replace(/<div\b([^>]*)>([\s\S]*?)<\/div>/gi, (full, rawAttrs, rawInner) => {
-      const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
-      const inner = typeof rawInner === "string" ? rawInner : "";
-      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
-        return full;
-      }
-      return extractLegacyHiddenDivNormalizedPayload(inner, identifier) ? "" : full;
-    });
-    return out.replace(/\n\s*\n\s*\n/g, `
-
-`).trim();
-  }
-  function stripOldTrackerBlocksGlobal(messages, identifier, keepNewest) {
-    if (keepNewest < 0)
-      return messages;
-    if (keepNewest === 0) {
-      return messages.map((msg) => {
-        if (!msg || typeof msg.content !== "string")
-          return msg;
-        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
-      });
-    }
-    let remaining = keepNewest;
-    let cutoffMsgIdx = -1;
-    let keepInCutoff = 0;
-    for (let msgIdx = messages.length - 1;msgIdx >= 0; msgIdx -= 1) {
-      const msg = messages[msgIdx];
-      if (!msg || typeof msg.content !== "string")
-        continue;
-      const count = countMatchingTrackerBlocksInMessage(msg.content);
-      if (count === 0)
-        continue;
-      if (count >= remaining) {
-        cutoffMsgIdx = msgIdx;
-        keepInCutoff = remaining;
-        break;
-      }
-      remaining -= count;
-    }
-    if (cutoffMsgIdx < 0)
-      return messages;
-    return messages.map((msg, msgIdx) => {
-      if (!msg || typeof msg.content !== "string")
-        return msg;
-      if (msgIdx > cutoffMsgIdx)
-        return msg;
-      if (msgIdx < cutoffMsgIdx) {
-        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
-      }
-      const ranges = collectTrackerBlockRanges(msg.content, identifier);
-      if (ranges.length === 0)
-        return msg;
-      const keepStart = Math.max(0, ranges.length - keepInCutoff);
-      let out = "";
-      let cursor = 0;
-      for (let i = 0;i < ranges.length; i += 1) {
-        const r = ranges[i];
-        out += msg.content.slice(cursor, r.start);
-        if (i >= keepStart)
-          out += msg.content.slice(r.start, r.end);
-        cursor = r.end;
-      }
-      out += msg.content.slice(cursor);
-      return { ...msg, content: out.replace(/\n\s*\n\s*\n/g, `
-
-`).trim() };
-    });
-  }
-  function countMatchingTrackerBlocksInMessage(content) {
-    if (!content)
-      return 0;
-    let count = 0;
-    const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
-    for (const match of content.matchAll(fenceRe)) {
-      if (match[0])
-        count++;
-    }
-    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
-    const cleanIdentifier = sanitizeIdentifier(config.codeBlockIdentifier);
-    for (const match of content.matchAll(tagRe)) {
-      const attrs = parseTagAttributes(match[1] || "");
-      const typeAttr = sanitizeIdentifier(attrs.type || "");
-      if (typeAttr && typeAttr !== cleanIdentifier)
-        continue;
-      if (match[0])
-        count++;
-    }
-    count += legacyHiddenDivTrackerRanges(content).length;
-    return count;
-  }
-  function countTrackersInMessages(messages, maxNeeded = Number.MAX_SAFE_INTEGER) {
-    let count = 0;
-    for (let i = messages.length - 1;i >= 0; i -= 1) {
-      const msg = messages[i];
-      if (!msg || typeof msg.content !== "string")
-        continue;
-      count += countMatchingTrackerBlocksInMessage(msg.content);
-      if (count >= maxNeeded)
-        return count;
-    }
-    return count;
-  }
-  function buildTrackerInjectionBlock(entries) {
-    if (entries.length === 1) {
-      return `Previous tracker state:
-${formatTrackerForPrompt(entries[0].payload)}`;
-    }
-    const snapshots = entries.map((entry, index) => `Snapshot ${index + 1}:
-${formatTrackerForPrompt(entry.payload)}`).join(`
-
-`);
-    return `Previous tracker states (oldest \u2192 newest):
-
-${snapshots}`;
-  }
-  function withTrailingDirective(messages, directive) {
-    if (!directive)
-      return messages;
-    const injected = messages.slice();
-    injected.splice(Math.max(0, injected.length - 1), 0, { role: "system", content: directive });
-    return injected;
-  }
-  return { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective };
 }
 
 // src/backend/trackerHistory.ts
@@ -13922,105 +13334,70 @@ function createLegacyTrackerNormalizer(deps) {
   };
 }
 
-// src/backend/conceptionRules.ts
-var CONCEPTION_CONFIG = {
-  threshold: 85,
-  autoAt: 100,
-  earlyLutealMaxDay: 19
-};
-function getCharactersFromPayload(payload) {
-  const chars = payload.characters;
-  if (!Array.isArray(chars))
+// src/backend/presetSanitizers.ts
+function upgradeLegacyImportedPreset(preset) {
+  const html = preset.htmlTemplate || "";
+  const isMissingAttire = !html.includes("nw-attire");
+  const bundled = getTemplatePresetById("narrative-weave-simtracker");
+  const bundledRevision = Number(bundled.extSettings?.presetRevision) || 0;
+  const importedRevision = Number(preset.extSettings?.presetRevision) || 0;
+  const isOutdatedRevision = importedRevision < bundledRevision;
+  const isLegacyNarrativeWeave = preset.templateName === "Narrative Weave SimTracker" && html.includes("nw-turn-updates") && html.includes("nw-delta-segment") && (!html.includes("nw-stat-numbers") || isMissingAttire || isOutdatedRevision);
+  if (!isLegacyNarrativeWeave)
+    return preset;
+  return {
+    ...preset,
+    htmlTemplate: bundled.htmlTemplate || preset.htmlTemplate,
+    ...isMissingAttire || isOutdatedRevision ? {
+      sysPrompt: bundled.sysPrompt || preset.sysPrompt,
+      displayInstructions: bundled.displayInstructions || preset.displayInstructions,
+      inlineTemplatesEnabled: bundled.inlineTemplatesEnabled ?? preset.inlineTemplatesEnabled,
+      inlineTemplates: bundled.inlineTemplates || preset.inlineTemplates,
+      customFields: bundled.customFields || preset.customFields,
+      extSettings: bundled.extSettings || preset.extSettings
+    } : {}
+  };
+}
+function sanitizePresetArray(value) {
+  if (!Array.isArray(value))
     return [];
-  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
+  return value.filter((item) => item && typeof item === "object").map((item, idx) => {
+    const p = item;
+    return upgradeLegacyImportedPreset({
+      id: typeof p.id === "string" && p.id ? p.id : `user-preset-${idx}`,
+      templateName: typeof p.templateName === "string" ? p.templateName : `User Preset ${idx + 1}`,
+      templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "User",
+      htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+      sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+      displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+      inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+      inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+      customFields: Array.isArray(p.customFields) ? p.customFields : [],
+      extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+    });
+  });
 }
-function isFemaleOrFuta(stats) {
-  const sex = String(stats.sex || "").toLowerCase();
-  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
-}
-function isInFertileWindow(stats) {
-  const stage = String(stats.cycle_stage || "").toLowerCase();
-  const stageId = Number(stats.cycle_stage_id || 0);
-  if (stage === "ovulation" || stageId === 3)
-    return true;
-  if (stage === "rut" || stageId === 6)
-    return true;
-  if (stage === "luteal" || stageId === 4) {
-    const day = Number(stats.cycle_day || 0);
-    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
-  }
-  return false;
-}
-function extractCurrentDate(payload) {
-  const world = payload.worldData;
-  const date = world?.current_date;
-  if (typeof date === "string" && date.trim())
-    return date.trim();
-  return new Date().toISOString().slice(0, 10);
-}
-function isAlreadyConceivedOrPregnant(stats) {
-  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
-}
-function coinFlip() {
-  return Math.random() < 0.5;
-}
-
-// src/backend/conceptionFlow.ts
-function latestNarrativeBeat(messages) {
-  for (let i = messages.length - 1;i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (!msg || msg.role !== "user" || typeof msg.content !== "string" || !msg.content.trim())
-      continue;
-    return msg.content;
-  }
-  return "";
-}
-function planForcedConception(history, names, conceptionDate) {
-  if (names.length === 0 || history.length === 0)
+function sanitizeSinglePreset(value, fallbackId) {
+  if (!value || typeof value !== "object")
     return null;
-  const latest = history[history.length - 1];
-  const parsed = parseTrackerPayload(latest.payload);
-  if (!parsed)
-    return null;
-  const characters = getCharactersFromPayload(parsed);
-  let mutated = false;
-  for (const char of characters) {
-    if (typeof char.name !== "string" || !names.includes(char.name))
-      continue;
-    if (char.preg === true || char.conceived === true)
-      continue;
-    char.conceived = true;
-    if (typeof char.conception_date !== "string" || !char.conception_date.trim()) {
-      char.conception_date = conceptionDate;
-    }
-    mutated = true;
-  }
-  if (!mutated)
-    return null;
-  const newPayload = JSON.stringify(parsed, null, 2);
-  return { messageId: latest.messageId, oldPayload: latest.payload, newPayload };
+  const p = value;
+  return {
+    id: typeof p.id === "string" && p.id ? p.id : fallbackId,
+    templateName: typeof p.templateName === "string" && p.templateName ? p.templateName : fallbackId,
+    templateAuthor: typeof p.templateAuthor === "string" ? p.templateAuthor : "Seeded",
+    htmlTemplate: typeof p.htmlTemplate === "string" ? p.htmlTemplate : "",
+    sysPrompt: typeof p.sysPrompt === "string" ? p.sysPrompt : "",
+    displayInstructions: typeof p.displayInstructions === "string" ? p.displayInstructions : "",
+    inlineTemplatesEnabled: typeof p.inlineTemplatesEnabled === "boolean" ? p.inlineTemplatesEnabled : false,
+    inlineTemplates: Array.isArray(p.inlineTemplates) ? p.inlineTemplates : [],
+    customFields: Array.isArray(p.customFields) ? p.customFields : [],
+    extSettings: p.extSettings && typeof p.extSettings === "object" ? p.extSettings : {}
+  };
 }
-function rewriteTrackerInMessages(messages, oldPayload, newPayload, extractTrackerPayloadFromMessage) {
-  const oldTrim = oldPayload.trim();
-  if (!oldTrim || oldTrim === newPayload.trim())
-    return;
-  for (let i = 0;i < messages.length; i += 1) {
-    const msg = messages[i];
-    if (!msg || typeof msg.content !== "string")
-      continue;
-    const found = extractTrackerPayloadFromMessage(msg.content);
-    if (!found || found.trim() !== oldTrim)
-      continue;
-    messages[i] = { ...msg, content: msg.content.replace(oldPayload, newPayload) };
-  }
-}
-function buildConceptionDirective(names) {
-  if (names.length === 0)
-    return "";
-  const subject = names.length === 1 ? names[0] : names.join(", ");
-  const verb = names.length === 1 ? "has" : "have";
-  const pronoun = names.length === 1 ? "her" : "them";
-  return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
+function sanitizeInlinePacks(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter((item) => item && typeof item === "object");
 }
 
 // src/backend/seededPresets.ts
@@ -14317,273 +13694,6 @@ function resolveSecondaryConnection(connections, selectedConnectionId, configure
     return { ok: false, reason: "model", model };
   }
   return { ok: true, connection, provider, model };
-}
-
-// src/backend/commandEngine.ts
-function createCommandEngine(deps) {
-  function formatTrackerPayload2(data, format, identifier) {
-    return formatTrackerPayload(data, format, identifier, deps.readConfig().trackerTagName);
-  }
-  function makeStarterTrackerBlock() {
-    const config = deps.readConfig();
-    return formatTrackerPayload2(buildTemplateExampleData(deps.getActivePreset()), config.trackerFormat, config.codeBlockIdentifier);
-  }
-  function replaceTrackerBlock2(content, identifier, replacementBlock) {
-    return replaceTrackerBlock(content, identifier, replacementBlock, deps.readConfig().trackerTagName);
-  }
-  function buildCommandResponse(payload) {
-    return { type: "command_result", payload };
-  }
-  async function mutateChatForCommand(command, arg1, ctx) {
-    if (!deps.hasChatMutationPermission() || !ctx.chatId)
-      return null;
-    let messages;
-    try {
-      messages = await deps.getMessages(ctx.chatId);
-    } catch {
-      return null;
-    }
-    let latestTrackerMessage = null;
-    for (let i = messages.length - 1;i >= 0; i -= 1) {
-      const msg = messages[i];
-      if (deps.extractTrackerPayloadFromMessage(msg.content)) {
-        latestTrackerMessage = msg;
-        break;
-      }
-    }
-    if (command === "/sst-add") {
-      const target = messages.findLast((msg) => msg.role === "assistant") || null;
-      if (!target) {
-        return {
-          command: "sst-add",
-          ok: false,
-          message: "No assistant message found to append tracker tag.",
-          mode: "chat_mutation"
-        };
-      }
-      if (deps.extractTrackerPayloadFromMessage(target.content)) {
-        return {
-          command: "sst-add",
-          ok: false,
-          message: "Latest assistant message already contains a tracker tag.",
-          mode: "chat_mutation"
-        };
-      }
-      const block = makeStarterTrackerBlock();
-      const updatedContent2 = `${target.content.trimEnd()}
-
-${block}`;
-      await deps.updateMessage(ctx.chatId, target.id, { content: updatedContent2 });
-      await deps.trackEvent("sst.command.add", { mode: "chat_mutation" }, { chatId: ctx.chatId });
-      return {
-        command: "sst-add",
-        ok: true,
-        message: "Added starter tracker tag to latest assistant message.",
-        block,
-        mode: "chat_mutation"
-      };
-    }
-    if (!latestTrackerMessage) {
-      return {
-        command: command.replace("/", ""),
-        ok: false,
-        message: "No tracker tag found in current chat.",
-        mode: "chat_mutation"
-      };
-    }
-    const raw = deps.extractTrackerPayloadFromMessage(latestTrackerMessage.content);
-    if (!raw) {
-      return {
-        command: command.replace("/", ""),
-        ok: false,
-        message: "Latest tracker tag could not be read.",
-        mode: "chat_mutation"
-      };
-    }
-    const parsed = parseTrackerPayload(raw);
-    if (!parsed) {
-      return {
-        command: command.replace("/", ""),
-        ok: false,
-        message: "Latest tracker tag is invalid and cannot be rewritten.",
-        mode: "chat_mutation"
-      };
-    }
-    const targetFormat = command === "/sst-convert" ? arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat : deps.readConfig().trackerFormat;
-    const replacement = formatTrackerPayload2(parsed, targetFormat, deps.readConfig().codeBlockIdentifier);
-    const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, deps.readConfig().codeBlockIdentifier, replacement);
-    await deps.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
-    deps.writeLastSimStats(ctx.chatId, targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2), latestTrackerMessage.id);
-    deps.pushMacroValues();
-    await deps.trackEvent(command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen", { mode: "chat_mutation", format: targetFormat }, { chatId: ctx.chatId });
-    return {
-      command: command.replace("/", ""),
-      ok: true,
-      message: command === "/sst-convert" ? `Converted latest tracker to ${targetFormat.toUpperCase()} and updated chat message.` : "Rebuilt latest tracker tag in preferred format and updated chat message.",
-      block: replacement,
-      mode: "chat_mutation"
-    };
-  }
-  async function handleSlashCommand(content, ctx) {
-    const trimmed = content.trim();
-    if (!trimmed.startsWith("/sst-"))
-      return null;
-    const [commandRaw, arg1] = trimmed.split(/\s+/);
-    const command = commandRaw;
-    if (!["/sst-add", "/sst-convert", "/sst-regen"].includes(command)) {
-      return buildCommandResponse({
-        command: commandRaw.replace("/", ""),
-        ok: false,
-        message: "Unknown SST command. Supported: /sst-add, /sst-convert, /sst-regen",
-        mode: "fallback"
-      });
-    }
-    const chatResult = await mutateChatForCommand(command, arg1, ctx);
-    if (chatResult) {
-      return buildCommandResponse(chatResult);
-    }
-    if (command === "/sst-convert") {
-      const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat;
-      const lastSimStats2 = deps.readLastSimStats(ctx.chatId);
-      if (!lastSimStats2 || lastSimStats2 === "{}") {
-        return buildCommandResponse({
-          command: "sst-convert",
-          ok: false,
-          message: "No tracker tag found yet.",
-          mode: "fallback"
-        });
-      }
-      const parsed2 = parseTrackerPayload(lastSimStats2);
-      if (!parsed2) {
-        return buildCommandResponse({
-          command: "sst-convert",
-          ok: false,
-          message: "Latest tracker tag is invalid and cannot be converted.",
-          mode: "fallback"
-        });
-      }
-      const block2 = formatTrackerPayload2(parsed2, target, deps.readConfig().codeBlockIdentifier);
-      deps.writeLastSimStats(ctx.chatId, target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2));
-      deps.pushMacroValues();
-      await deps.trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-      return buildCommandResponse({
-        command: "sst-convert",
-        ok: true,
-        message: `Converted latest tracker to ${target.toUpperCase()}.`,
-        block: block2,
-        mode: "fallback"
-      });
-    }
-    if (command === "/sst-add") {
-      const block2 = makeStarterTrackerBlock();
-      await deps.trackEvent("sst.command.add", { mode: "fallback" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-      return buildCommandResponse({
-        command: "sst-add",
-        ok: true,
-        message: "Generated a starter tracker tag.",
-        block: block2,
-        mode: "fallback"
-      });
-    }
-    const lastSimStats = deps.readLastSimStats(ctx.chatId);
-    if (!lastSimStats || lastSimStats === "{}") {
-      return buildCommandResponse({
-        command: "sst-regen",
-        ok: false,
-        message: "No tracker tag to regenerate yet. Use /sst-add first.",
-        mode: "fallback"
-      });
-    }
-    const parsed = parseTrackerPayload(lastSimStats);
-    if (!parsed) {
-      return buildCommandResponse({
-        command: "sst-regen",
-        ok: false,
-        message: "Latest tracker is invalid and cannot be regenerated.",
-        mode: "fallback"
-      });
-    }
-    const block = formatTrackerPayload2(parsed, deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
-    await deps.trackEvent("sst.command.regen", { mode: "fallback", format: deps.readConfig().trackerFormat }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-    return buildCommandResponse({
-      command: "sst-regen",
-      ok: true,
-      message: "Rebuilt latest tracker tag in preferred format.",
-      block,
-      mode: "fallback"
-    });
-  }
-  return { handleSlashCommand };
-}
-
-// src/backend/settingsStore.ts
-var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
-var CONFIG_PATH = "preferences.json";
-function createSettingsStore(deps) {
-  async function loadTypeSafeApiKey(userId) {
-    try {
-      return await deps.enclaveGet(TYPE_SAFE_ENCLAVE_KEY, userId) ?? "";
-    } catch (err) {
-      deps.logWarn(`Enclave unavailable; TypeSafe key not loaded: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return "";
-  }
-  async function loadConfig(userId, onNormalized) {
-    if (!userId)
-      throw new Error("A user id is required to load SimTracker settings.");
-    try {
-      const parsed = await deps.getJson(CONFIG_PATH, {
-        fallback: { ...DEFAULT_CONFIG },
-        userId
-      });
-      const config = normalizeStoredConfig(parsed);
-      onNormalized(config);
-      config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
-      return config;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      deps.logError(`Failed to load SimTracker settings for user ${userId}: ${message}`);
-      throw new Error(`Unable to load saved settings: ${message}`);
-    }
-  }
-  async function saveConfig(userId, configToSave) {
-    if (!userId)
-      throw new Error("A user id is required to save SimTracker settings.");
-    await deps.setJson(CONFIG_PATH, { ...configToSave, typeSafeApiKey: "" }, { indent: 2, userId });
-  }
-  async function syncTypeSafeKeyToEnclave(userId, nextKey, previousKey) {
-    const next = nextKey.trim();
-    try {
-      if (next && next !== previousKey) {
-        await deps.enclavePut(TYPE_SAFE_ENCLAVE_KEY, next, userId);
-      } else if (!next && previousKey) {
-        await deps.enclaveDelete(TYPE_SAFE_ENCLAVE_KEY, userId);
-      }
-    } catch (err) {
-      deps.logWarn(`Failed to persist the TypeSafe key to the enclave: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return { loadConfig, saveConfig, syncTypeSafeKeyToEnclave };
-}
-
-// src/backend/backendMessageContext.ts
-function readMessageContext(payload) {
-  if (!payload || typeof payload !== "object") {
-    return { chatId: null, messageId: null, content: null };
-  }
-  const obj = payload;
-  const nestedMessage = obj.message && typeof obj.message === "object" ? obj.message : {};
-  const nestedChat = obj.chat && typeof obj.chat === "object" ? obj.chat : {};
-  const chatIdCandidates = [obj.chatId, obj.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, obj.id];
-  const messageIdCandidates = [obj.messageId, obj.message_id, nestedMessage.id, nestedMessage.messageId, obj.id];
-  const content = (typeof nestedMessage.content === "string" ? nestedMessage.content : null) || (typeof obj.content === "string" ? obj.content : null);
-  const chatId = chatIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  const messageId = messageIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  return {
-    chatId: chatId || null,
-    messageId: messageId || null,
-    content
-  };
 }
 
 // src/shared/trackerData.ts
@@ -14974,6 +14084,1852 @@ function interpretConceptionAnswers(answers, candidates, fireThreshold = CONCEPT
   return fired;
 }
 
+// src/backend/secondaryGeneration.ts
+function createSecondaryGeneration(deps) {
+  const {
+    spindle: spindle2,
+    hasPermission,
+    trackEvent,
+    getActivePreset,
+    buildExampleTrackerBlock,
+    formatTrackerPayload,
+    rehydrateChatTrackerHistory,
+    extractTrackerPayloadFromMessage,
+    getRecentChatTrackers,
+    recordChatTracker,
+    pushMacroValues,
+    typeSafeCorsTransport
+  } = deps;
+  let secondaryGenerationChain = Promise.resolve();
+  const queuedSecondaryJobs = new Set;
+  function enqueueSecondaryGeneration(chatId, messageId) {
+    const key = `${chatId}::${messageId}`;
+    if (queuedSecondaryJobs.has(key))
+      return secondaryGenerationChain;
+    queuedSecondaryJobs.add(key);
+    secondaryGenerationChain = secondaryGenerationChain.catch(() => {
+      return;
+    }).then(() => generateTrackerWithSecondaryLLM(chatId, messageId)).catch((err) => {
+      spindle2.log.error(`Queued secondary LLM generation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }).finally(() => {
+      queuedSecondaryJobs.delete(key);
+    });
+    return secondaryGenerationChain;
+  }
+  function describeMissingModelGuidance() {
+    return "The selected connection has no usable default model. Choose a model in SimTracker settings \u2192 Secondary LLM, or select a connection with a configured model.";
+  }
+  function describeRejectedModelGuidance(model) {
+    return `The provider rejected the configured model id \`${model}\`. Open SimTracker settings \u2192 Secondary LLM and confirm the override matches a model this connection can serve, or clear the override to fall back to the connection's default.`;
+  }
+  async function commitTrackerAppend(chatId, targetMessage, parsed, via) {
+    const trackerBlock = formatTrackerPayload(parsed, deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+    const updatedContent = `${targetMessage.content.trimEnd()}
+
+${trackerBlock}`;
+    await spindle2.chat.updateMessage(chatId, targetMessage.id, { content: updatedContent });
+    const lastSimStats = deps.readConfig().trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
+    recordChatTracker(chatId, targetMessage.id, lastSimStats);
+    pushMacroValues();
+    spindle2.log.info(`Tracker append complete via ${via}`);
+    spindle2.sendToFrontend({
+      type: "secondary_generation_complete",
+      chatId,
+      messageId: targetMessage.id,
+      content: updatedContent,
+      via
+    }, deps.readActiveUserId() || undefined);
+  }
+  async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
+    if (!deps.readConfig().useSecondaryLLM)
+      return;
+    if (!hasPermission("generation")) {
+      spindle2.log.warn("Secondary LLM generation requires 'generation' permission");
+      return;
+    }
+    if (!hasPermission("chat_mutation")) {
+      spindle2.log.warn("Secondary LLM generation requires 'chat_mutation' permission");
+      return;
+    }
+    let trimmedModel = (deps.readConfig().secondaryLLMModel || "").trim();
+    spindle2.sendToFrontend({ type: "secondary_generation_started", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+    try {
+      await rehydrateChatTrackerHistory(chatId);
+      const messages = await spindle2.chat.getMessages(chatId);
+      if (!messages.length)
+        return;
+      const targetMessage = messages.find((m) => m.id === targetMessageId);
+      if (!targetMessage || targetMessage.role !== "assistant")
+        return;
+      if (extractTrackerPayloadFromMessage(targetMessage.content))
+        return;
+      const preset = getActivePreset();
+      const systemPrompt = preset.sysPrompt || "";
+      const formatExample = buildExampleTrackerBlock(deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+      const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
+      const tagName = sanitizeTagName(deps.readConfig().trackerTagName);
+      const identifier = deps.readConfig().codeBlockIdentifier;
+      const messageCount = deps.readConfig().secondaryLLMMessageCount;
+      const recentMessages = messages.filter((m) => m.role !== "system").slice(-messageCount);
+      const historicalTrackers = collectSecondaryHistory({
+        retainTrackerCount: deps.readConfig().retainTrackerCount,
+        targetMessageId,
+        messages,
+        getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
+        extractTrackerPayloadFromMessage
+      });
+      if (deps.readConfig().typeSafeEnabled && deps.readConfig().typeSafeQuickAppend && deps.readConfig().typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
+        const previousPayload = historicalTrackers.length > 0 ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]) : null;
+        if (previousPayload) {
+          let fastLaneMessage = targetMessage.content.replace(buildTrackerTagRegex(tagName, "ig"), "").replace(buildTrackerFenceRegex(identifier, "gi"), "");
+          if (deps.readConfig().secondaryLLMStripHTML)
+            fastLaneMessage = stripStructuralHTML(fastLaneMessage);
+          const fields = (Array.isArray(preset.customFields) ? preset.customFields : []).map((field) => ({
+            key: typeof field?.key === "string" ? field.key : "",
+            description: typeof field?.description === "string" ? field.description : ""
+          })).filter((field) => field.key);
+          const plan = buildFastLanePlan({ message: fastLaneMessage.trim(), previousPayload, fields });
+          if (plan) {
+            let answers = null;
+            try {
+              answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: deps.readConfig().typeSafeApiKey.trim(), model: deps.readConfig().typeSafeModel }, plan.state, plan.questions);
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              spindle2.log.warn(`TypeSafe fast lane unavailable, falling back to full secondary LLM: ${detail}`);
+              await trackEvent("sst.typesafe.error", { stage: "fast-lane", error: detail }, { level: "warn", chatId });
+            }
+            if (answers) {
+              const gate = interpretGate(answers, deps.readConfig().typeSafeConfidenceFloor);
+              if (gate === "skip") {
+                spindle2.log.info("TypeSafe gate: no tracker changes warranted for this message");
+                await trackEvent("sst.typesafe.gate_skip", { messageId: targetMessageId }, { chatId });
+                spindle2.sendToFrontend({ type: "secondary_generation_skipped", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+                return;
+              }
+              if (gate === "fast") {
+                const result2 = applyFastLaneAnswers(previousPayload, plan.directives, answers, deps.readConfig().typeSafeConfidenceFloor);
+                if (result2.changed.length > 0) {
+                  await commitTrackerAppend(chatId, targetMessage, result2.payload, "typesafe-fast-lane");
+                  await trackEvent("sst.typesafe.fast_append", { changed: result2.changed }, { chatId });
+                  return;
+                }
+                await trackEvent("sst.typesafe.fast_append_fallback", { reason: "no-confident-changes" }, { chatId });
+              }
+            }
+          }
+        }
+      }
+      if (!hasPermission("generation_parameters")) {
+        const guidance = "Secondary LLM generation requires the 'generation_parameters' permission so the configured model id reaches the provider. Grant it in SimTracker's permission prompt and try again.";
+        spindle2.log.warn(guidance);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        return;
+      }
+      const connections = await spindle2.connections.list(deps.readActiveUserId() || undefined);
+      const route = resolveSecondaryConnection(connections, deps.readConfig().secondaryLLMConnectionId, trimmedModel);
+      trimmedModel = route.model;
+      if (!route.ok) {
+        const guidance = route.reason === "provider" ? "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again." : describeMissingModelGuidance();
+        spindle2.log.warn(guidance);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        return;
+      }
+      const { connection, provider } = route;
+      const { cleanedMessages, conversationText } = buildSecondaryPrompt({
+        processedPrompt,
+        historicalTrackers,
+        recentMessages,
+        tagName,
+        identifier,
+        stripHTML: deps.readConfig().secondaryLLMStripHTML,
+        trackerFormat: deps.readConfig().trackerFormat
+      });
+      const llmMessages = [
+        { role: "user", content: conversationText }
+      ];
+      const parameters = {
+        model: trimmedModel,
+        temperature: deps.readConfig().secondaryLLMTemperature
+      };
+      spindle2.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${deps.readConfig().secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
+      const generationRequest = {
+        type: "raw",
+        messages: llmMessages,
+        parameters,
+        connection_id: connection.id,
+        userId: deps.readActiveUserId() || undefined,
+        provider,
+        model: trimmedModel
+      };
+      const result = await spindle2.generate.raw(generationRequest);
+      const resultObj = result;
+      const generatedText = typeof resultObj.content === "string" ? resultObj.content : "";
+      if (!generatedText) {
+        spindle2.log.warn("Secondary LLM returned empty response");
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        return;
+      }
+      let parsed = parseGeneratedTrackerPayload(generatedText);
+      if (!parsed) {
+        spindle2.log.warn("Secondary LLM response was invalid; attempting one syntax repair");
+        const repairResult = await spindle2.generate.raw({
+          ...generationRequest,
+          messages: [
+            {
+              role: "system",
+              content: `Repair the supplied tracker as ${deps.readConfig().trackerFormat.toUpperCase()} syntax. Preserve all existing fields and values. Do not add explanations, code fences, or XML tags. Return only the complete corrected document.`
+            },
+            { role: "user", content: generatedText }
+          ]
+        });
+        const repairResultObj = repairResult;
+        const repairedText = typeof repairResultObj.content === "string" ? repairResultObj.content : "";
+        parsed = parseGeneratedTrackerPayload(repairedText);
+      }
+      if (!parsed) {
+        spindle2.log.warn("Secondary LLM response and repair could not be parsed as valid tracker data");
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        return;
+      }
+      if (deps.readConfig().typeSafeEnabled && deps.readConfig().typeSafeVerify && deps.readConfig().typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
+        const previousPayload = parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]);
+        const narrative = cleanedMessages.map((msg) => `${msg.role === "user" ? "User" : "Character"}: ${msg.content}`).join(`
+
+`);
+        const verifyPlan = previousPayload ? buildVerifyPlan({ narrative, previousPayload, generatedPayload: parsed }) : null;
+        if (verifyPlan) {
+          try {
+            const verdict = interpretVerifyAnswers(await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: deps.readConfig().typeSafeApiKey.trim(), model: deps.readConfig().typeSafeModel }, verifyPlan.state, verifyPlan.questions));
+            if (!verdict.ok) {
+              const message = `TypeSafe verification rejected the generated tracker: ${verdict.reasons.join("; ")}`;
+              spindle2.log.warn(message);
+              spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+              await trackEvent("sst.typesafe.verify_reject", { reasons: verdict.reasons }, { level: "warn", chatId });
+              return;
+            }
+            await trackEvent("sst.typesafe.verify_pass", {}, { chatId });
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            spindle2.log.warn(`TypeSafe verification unavailable, appending anyway: ${detail}`);
+            await trackEvent("sst.typesafe.error", { stage: "verify", error: detail }, { level: "warn", chatId });
+          }
+        }
+      }
+      await commitTrackerAppend(chatId, targetMessage, parsed, "secondary-llm");
+      await trackEvent("sst.secondary_generation.complete", {
+        connectionId: deps.readConfig().secondaryLLMConnectionId,
+        model: deps.readConfig().secondaryLLMModel
+      }, { chatId });
+    } catch (err) {
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      const looksLikeModelError = /\bmodel\b/i.test(rawMessage) && /(missing|invalid|empty|required|not.*found)/i.test(rawMessage);
+      const message = looksLikeModelError ? `${rawMessage}
+
+${describeRejectedModelGuidance(trimmedModel)}` : rawMessage;
+      spindle2.log.error(`Secondary LLM generation failed: ${rawMessage}`);
+      spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+      await trackEvent("sst.secondary_generation.failed", { error: rawMessage }, { level: "error" });
+    }
+  }
+  return { enqueueSecondaryGeneration };
+}
+
+// src/backend/backendConfig.ts
+function sanitizeTrackerFormat(value) {
+  return value === "yaml" ? "yaml" : "json";
+}
+function sanitizeTemplateId(value) {
+  if (typeof value !== "string")
+    return DEFAULT_CONFIG.templateId;
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_CONFIG.templateId;
+}
+function sanitizeRetainCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.retainTrackerCount;
+  return Math.max(0, Math.min(20, Math.floor(value)));
+}
+function sanitizeInlineEnabled(value) {
+  return typeof value === "boolean" ? value : DEFAULT_CONFIG.enableInlineTemplates;
+}
+function sanitizeBool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function sanitizeStr(value, fallback) {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+function sanitizeFertilityCycleBias(value) {
+  return typeof value === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(value) ? value : DEFAULT_CONFIG.fertilityCycleBias;
+}
+function sanitizeSecondaryLLMModel(value, fallback) {
+  const raw = sanitizeStr(value, fallback);
+  const lowered = raw.toLowerCase();
+  if (lowered === "string" || lowered === "your-model-here" || lowered === "model" || lowered === "null" || lowered === "undefined") {
+    return "";
+  }
+  return raw;
+}
+function sanitizeMessageCount(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMMessageCount;
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+function sanitizeTemperature(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return DEFAULT_CONFIG.secondaryLLMTemperature;
+  return Math.max(0, Math.min(2, Math.round(value * 100) / 100));
+}
+function sanitizeTypeSafeModel(value) {
+  const model = sanitizeStr(value, DEFAULT_CONFIG.typeSafeModel);
+  return model || DEFAULT_CONFIG.typeSafeModel;
+}
+function sanitizeConfidenceFloor(value) {
+  const floor = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_CONFIG.typeSafeConfidenceFloor;
+  return Math.min(0.95, Math.max(0.3, Math.round(floor * 100) / 100));
+}
+function normalizeStoredConfig(parsed) {
+  return {
+    trackerTagName: sanitizeTagName(parsed.trackerTagName),
+    codeBlockIdentifier: sanitizeIdentifier(parsed.codeBlockIdentifier),
+    hideSimBlocks: sanitizeBool(parsed.hideSimBlocks, DEFAULT_CONFIG.hideSimBlocks),
+    templateId: sanitizeTemplateId(parsed.templateId),
+    trackerFormat: sanitizeTrackerFormat(parsed.trackerFormat),
+    retainTrackerCount: sanitizeRetainCount(parsed.retainTrackerCount),
+    enableInlineTemplates: sanitizeInlineEnabled(parsed.enableInlineTemplates),
+    userPresets: sanitizePresetArray(parsed.userPresets),
+    inlinePacks: sanitizeInlinePacks(parsed.inlinePacks),
+    useSecondaryLLM: sanitizeBool(parsed.useSecondaryLLM, DEFAULT_CONFIG.useSecondaryLLM),
+    secondaryLLMConnectionId: sanitizeStr(parsed.secondaryLLMConnectionId, DEFAULT_CONFIG.secondaryLLMConnectionId),
+    secondaryLLMModel: sanitizeSecondaryLLMModel(parsed.secondaryLLMModel, DEFAULT_CONFIG.secondaryLLMModel),
+    secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
+    secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
+    secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
+    fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
+    typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
+    typeSafeApiKey: "",
+    typeSafeModel: sanitizeTypeSafeModel(parsed.typeSafeModel),
+    typeSafeQuickAppend: sanitizeBool(parsed.typeSafeQuickAppend, DEFAULT_CONFIG.typeSafeQuickAppend),
+    typeSafeVerify: sanitizeBool(parsed.typeSafeVerify, DEFAULT_CONFIG.typeSafeVerify),
+    typeSafeConception: sanitizeBool(parsed.typeSafeConception, DEFAULT_CONFIG.typeSafeConception),
+    typeSafeConfidenceFloor: sanitizeConfidenceFloor(parsed.typeSafeConfidenceFloor)
+  };
+}
+function mergeTrackerConfig(config, incoming) {
+  return {
+    trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
+    codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),
+    hideSimBlocks: sanitizeBool(incoming?.hideSimBlocks ?? config.hideSimBlocks, config.hideSimBlocks),
+    templateId: sanitizeTemplateId(incoming?.templateId ?? config.templateId),
+    trackerFormat: sanitizeTrackerFormat(incoming?.trackerFormat ?? config.trackerFormat),
+    retainTrackerCount: sanitizeRetainCount(incoming?.retainTrackerCount ?? config.retainTrackerCount),
+    enableInlineTemplates: sanitizeInlineEnabled(incoming?.enableInlineTemplates ?? config.enableInlineTemplates),
+    userPresets: sanitizePresetArray(incoming?.userPresets ?? config.userPresets),
+    inlinePacks: sanitizeInlinePacks(incoming?.inlinePacks ?? config.inlinePacks),
+    useSecondaryLLM: sanitizeBool(incoming?.useSecondaryLLM ?? config.useSecondaryLLM, config.useSecondaryLLM),
+    secondaryLLMConnectionId: sanitizeStr(incoming?.secondaryLLMConnectionId ?? config.secondaryLLMConnectionId, config.secondaryLLMConnectionId),
+    secondaryLLMModel: sanitizeSecondaryLLMModel(incoming?.secondaryLLMModel ?? config.secondaryLLMModel, config.secondaryLLMModel),
+    secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
+    secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
+    secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
+    fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
+    typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
+    typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),
+    typeSafeModel: sanitizeTypeSafeModel(incoming?.typeSafeModel ?? config.typeSafeModel),
+    typeSafeQuickAppend: sanitizeBool(incoming?.typeSafeQuickAppend ?? config.typeSafeQuickAppend, config.typeSafeQuickAppend),
+    typeSafeVerify: sanitizeBool(incoming?.typeSafeVerify ?? config.typeSafeVerify, config.typeSafeVerify),
+    typeSafeConception: sanitizeBool(incoming?.typeSafeConception ?? config.typeSafeConception, config.typeSafeConception),
+    typeSafeConfidenceFloor: sanitizeConfidenceFloor(incoming?.typeSafeConfidenceFloor ?? config.typeSafeConfidenceFloor)
+  };
+}
+
+// src/backend/frontendMessages.ts
+function createFrontendMessageHandler(deps) {
+  const {
+    spindle: spindle2,
+    loadConfig,
+    ensureConfigForUser,
+    syncTypeSafeKeyToEnclave,
+    saveConfig,
+    pushMacroValues,
+    trackEvent,
+    sendConfigState,
+    sendTagInterceptorConfig,
+    sendConfigError,
+    hasPermission,
+    enqueueSecondaryGeneration,
+    extractTrackerPayloadFromMessage,
+    forgetChatTracker,
+    rehydrateChatTrackerHistory,
+    getChatTrackerHistory,
+    handleImportPresetFile,
+    selectChat
+  } = deps;
+  return async (payload, userId) => {
+    if (!payload || typeof payload !== "object")
+      return;
+    deps.setActiveUserId(userId);
+    const message = payload;
+    let config = deps.readConfig();
+    if (message.type === "get_config") {
+      try {
+        await loadConfig(userId);
+        sendTagInterceptorConfig(userId);
+        await sendConfigState(userId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spindle2.log.error(`get_config handler failed: ${msg}`);
+        sendConfigError(userId, msg, "load");
+      }
+      return;
+    }
+    if (message.type === "set_config") {
+      try {
+        await ensureConfigForUser(userId);
+        config = deps.readConfig();
+        const incoming = message.config;
+        const previousTypeSafeKey = config.typeSafeApiKey.trim();
+        config = mergeTrackerConfig(config, incoming);
+        deps.writeConfig(config);
+        await syncTypeSafeKeyToEnclave(userId, config.typeSafeApiKey, previousTypeSafeKey);
+        await saveConfig(userId);
+        pushMacroValues();
+        await trackEvent("sst.config.updated", {
+          trackerTagName: config.trackerTagName,
+          templateId: config.templateId,
+          trackerFormat: config.trackerFormat,
+          retainTrackerCount: config.retainTrackerCount,
+          hideSimBlocks: config.hideSimBlocks,
+          useSecondaryLLM: config.useSecondaryLLM
+        });
+        await sendConfigState(userId);
+        spindle2.sendToFrontend({ type: "config_saved" }, userId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spindle2.log.error(`set_config handler failed for user ${userId}: ${msg}`);
+        sendConfigError(userId, msg, "save");
+      }
+      return;
+    }
+    if (message.type === "get_connections") {
+      if (!hasPermission("generation")) {
+        spindle2.log.warn("get_connections: 'generation' permission not granted");
+        spindle2.sendToFrontend({
+          type: "connections_list",
+          connections: [],
+          error: "Generation permission not granted"
+        }, userId);
+        return;
+      }
+      try {
+        spindle2.log.info(`get_connections: requesting with userId=${userId || "(none)"}`);
+        const connections = await spindle2.connections.list(userId || undefined);
+        spindle2.log.info(`get_connections: received ${connections?.length ?? 0} connection(s)`);
+        spindle2.sendToFrontend({ type: "connections_list", connections: connections ?? [] }, userId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spindle2.log.error(`get_connections failed: ${msg}`);
+        spindle2.sendToFrontend({ type: "connections_list", connections: [], error: msg }, userId);
+      }
+      return;
+    }
+    if (message.type === "trigger_secondary_generation") {
+      const chatId = typeof message.chatId === "string" ? message.chatId : null;
+      const messageId = typeof message.messageId === "string" ? message.messageId : null;
+      if (chatId && messageId) {
+        enqueueSecondaryGeneration(chatId, messageId);
+      }
+      return;
+    }
+    if (message.type === "regenerate_secondary_tracker") {
+      const chatId = typeof message.chatId === "string" ? message.chatId : null;
+      const hintedMessageId = typeof message.messageId === "string" ? message.messageId : null;
+      if (!chatId)
+        return;
+      if (!hasPermission("chat_mutation")) {
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "Regenerate requires 'chat_mutation' permission" }, userId);
+        return;
+      }
+      const messages = await spindle2.chat.getMessages(chatId);
+      let target = hintedMessageId ? messages.find((m) => m.id === hintedMessageId && m.role === "assistant") || null : null;
+      if (!target) {
+        for (let i = messages.length - 1;i >= 0; i -= 1) {
+          if (messages[i].role === "assistant") {
+            target = messages[i];
+            break;
+          }
+        }
+      }
+      if (!target) {
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "No assistant message was found in this chat to regenerate." }, userId);
+        return;
+      }
+      const tagRe = buildTrackerTagRegex(sanitizeTagName(config.trackerTagName), "gi");
+      const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
+      const hadTracker = extractTrackerPayloadFromMessage(target.content) !== null;
+      if (hadTracker) {
+        const stripped = target.content.replace(tagRe, "").replace(fenceRe, "").replace(/\n{3,}/g, `
+
+`).trimEnd();
+        spindle2.log.info(`Regenerate: stripping existing tracker from message ${target.id} in chat ${chatId}`);
+        await spindle2.chat.updateMessage(chatId, target.id, { content: stripped });
+        forgetChatTracker(chatId, target.id);
+      } else {
+        spindle2.log.info(`Regenerate: message ${target.id} in chat ${chatId} has no tracker yet \u2014 generating fresh`);
+      }
+      enqueueSecondaryGeneration(chatId, target.id);
+      return;
+    }
+    if (message.type === "get_latest_tracker") {
+      const chatId = typeof message.chatId === "string" ? message.chatId : null;
+      if (!chatId) {
+        if (!deps.isSelectedChatKnown())
+          selectChat(null);
+        spindle2.sendToFrontend({ type: "tracker_history_latest", chatId: null, entry: null }, userId);
+        return;
+      }
+      if (!deps.isSelectedChatKnown())
+        selectChat(chatId);
+      if (deps.readSelectedChatId() === chatId)
+        deps.setActiveChatId(chatId);
+      await rehydrateChatTrackerHistory(chatId);
+      const history = getChatTrackerHistory(chatId);
+      const entry = history.length > 0 ? history[history.length - 1] : null;
+      const previousEntry = history.length > 1 ? history[history.length - 2] : null;
+      spindle2.sendToFrontend({
+        type: "tracker_history_latest",
+        chatId,
+        entry: entry ? {
+          messageId: entry.messageId,
+          payload: entry.payload,
+          previousPayload: previousEntry?.payload || null
+        } : null
+      }, userId);
+      return;
+    }
+    if (message.type === "remove_inline_pack") {
+      const index = typeof message.index === "number" ? message.index : -1;
+      if (index >= 0 && index < config.inlinePacks.length) {
+        const next = config.inlinePacks.slice();
+        next.splice(index, 1);
+        config = { ...config, inlinePacks: next };
+        deps.writeConfig(config);
+        await saveConfig(userId);
+        pushMacroValues();
+        await sendConfigState(userId);
+      }
+      return;
+    }
+    if (message.type === "toggle_inline_pack") {
+      const index = typeof message.index === "number" ? message.index : -1;
+      const enabled = typeof message.enabled === "boolean" ? message.enabled : true;
+      if (index >= 0 && index < config.inlinePacks.length) {
+        const next = config.inlinePacks.slice();
+        next[index] = { ...next[index], enabled };
+        config = { ...config, inlinePacks: next };
+        deps.writeConfig(config);
+        await saveConfig(userId);
+        pushMacroValues();
+        await sendConfigState(userId);
+      }
+      return;
+    }
+    if (message.type === "delete_preset") {
+      await ensureConfigForUser(userId);
+      config = deps.readConfig();
+      const templateId = typeof message.templateId === "string" ? message.templateId : "";
+      const preset = config.userPresets.find((item) => item.id === templateId);
+      if (!preset) {
+        spindle2.sendToFrontend({ type: "delete_preset_result", ok: false, message: "Only imported templates can be deleted." }, userId);
+        return;
+      }
+      const previousConfig = config;
+      config = {
+        ...config,
+        userPresets: config.userPresets.filter((item) => item.id !== templateId),
+        templateId: config.templateId === templateId ? DEFAULT_CONFIG.templateId : config.templateId
+      };
+      deps.writeConfig(config);
+      try {
+        await saveConfig(userId);
+      } catch (err) {
+        config = previousConfig;
+        deps.writeConfig(config);
+        const detail = err instanceof Error ? err.message : String(err);
+        spindle2.log.error(`delete_preset failed: ${detail}`);
+        spindle2.sendToFrontend({ type: "delete_preset_result", ok: false, message: `Could not delete template: ${detail}` }, userId);
+        return;
+      }
+      pushMacroValues();
+      await sendConfigState(userId);
+      spindle2.sendToFrontend({ type: "delete_preset_result", ok: true, message: `Deleted template: ${preset.templateName}` }, userId);
+      return;
+    }
+    if (message.type === "import_preset_file") {
+      await handleImportPresetFile(message, userId);
+    }
+  };
+}
+
+// src/backend/trackerPromptRetention.ts
+function createTrackerPromptRetention(readConfig, codec) {
+  const config = {
+    get trackerTagName() {
+      return readConfig().trackerTagName;
+    },
+    get codeBlockIdentifier() {
+      return readConfig().codeBlockIdentifier;
+    }
+  };
+  const { legacyHiddenDivTrackerRanges, extractLegacyHiddenDivNormalizedPayload, extractTrackerPayloadFromMessage } = codec;
+  function collectTrackerBlockRanges(content, identifier) {
+    if (!content)
+      return [];
+    const desiredType = sanitizeIdentifier(identifier);
+    const ranges = [];
+    const seenStarts = new Set;
+    const fenceRe = buildTrackerFenceRegex(identifier, "gi");
+    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
+    for (const match of content.matchAll(fenceRe)) {
+      const text = match[0] || "";
+      const start = match.index;
+      if (typeof start !== "number" || !text || seenStarts.has(start))
+        continue;
+      seenStarts.add(start);
+      ranges.push({ start, end: start + text.length });
+    }
+    for (const match of content.matchAll(tagRe)) {
+      const text = match[0] || "";
+      const start = match.index;
+      if (typeof start !== "number" || !text || seenStarts.has(start))
+        continue;
+      const attrs = parseTagAttributes(match[1] || "");
+      const foundType = sanitizeIdentifier(attrs.type || "");
+      if (foundType && foundType !== desiredType)
+        continue;
+      seenStarts.add(start);
+      ranges.push({ start, end: start + text.length });
+    }
+    for (const range of legacyHiddenDivTrackerRanges(content)) {
+      if (seenStarts.has(range.start))
+        continue;
+      seenStarts.add(range.start);
+      ranges.push(range);
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    return ranges;
+  }
+  function formatTrackerBlocksInMessages(messages) {
+    let output = null;
+    for (let i = 0;i < messages.length; i += 1) {
+      const message = messages[i];
+      if (!message || typeof message.content !== "string")
+        continue;
+      const ranges = collectTrackerBlockRanges(message.content, config.codeBlockIdentifier);
+      if (ranges.length === 0)
+        continue;
+      let content = message.content;
+      let changed = false;
+      for (let j = ranges.length - 1;j >= 0; j -= 1) {
+        const range = ranges[j];
+        const block = content.slice(range.start, range.end);
+        const payload = extractTrackerPayloadFromMessage(block);
+        if (!payload)
+          continue;
+        const replacement = `Previous tracker state:
+${formatTrackerForPrompt(payload)}`;
+        content = content.slice(0, range.start) + replacement + content.slice(range.end);
+        changed = true;
+      }
+      if (!changed)
+        continue;
+      if (!output)
+        output = messages.slice();
+      output[i] = { ...message, content };
+    }
+    return output || messages;
+  }
+  function stripAllTrackerBlocks(content, identifier) {
+    if (!content)
+      return content;
+    const desiredType = sanitizeIdentifier(identifier);
+    let out = content.replace(buildTrackerFenceRegex(identifier, "gi"), "");
+    out = out.replace(buildTrackerTagRegex(config.trackerTagName, "gi"), (full, attrsRaw) => {
+      const attrs = parseTagAttributes(String(attrsRaw || ""));
+      const foundType = sanitizeIdentifier(attrs.type || "");
+      if (foundType && foundType !== desiredType)
+        return full;
+      return "";
+    });
+    out = out.replace(/<div\b([^>]*)>([\s\S]*?)<\/div>/gi, (full, rawAttrs, rawInner) => {
+      const attrs = typeof rawAttrs === "string" ? rawAttrs : "";
+      const inner = typeof rawInner === "string" ? rawInner : "";
+      if (!/style\s*=\s*(?:"[^"]*display\s*:\s*none\s*;?[^"]*"|'[^']*display\s*:\s*none\s*;?[^']*')/i.test(attrs)) {
+        return full;
+      }
+      return extractLegacyHiddenDivNormalizedPayload(inner, identifier) ? "" : full;
+    });
+    return out.replace(/\n\s*\n\s*\n/g, `
+
+`).trim();
+  }
+  function stripOldTrackerBlocksGlobal(messages, identifier, keepNewest) {
+    if (keepNewest < 0)
+      return messages;
+    if (keepNewest === 0) {
+      return messages.map((msg) => {
+        if (!msg || typeof msg.content !== "string")
+          return msg;
+        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
+      });
+    }
+    let remaining = keepNewest;
+    let cutoffMsgIdx = -1;
+    let keepInCutoff = 0;
+    for (let msgIdx = messages.length - 1;msgIdx >= 0; msgIdx -= 1) {
+      const msg = messages[msgIdx];
+      if (!msg || typeof msg.content !== "string")
+        continue;
+      const count = countMatchingTrackerBlocksInMessage(msg.content);
+      if (count === 0)
+        continue;
+      if (count >= remaining) {
+        cutoffMsgIdx = msgIdx;
+        keepInCutoff = remaining;
+        break;
+      }
+      remaining -= count;
+    }
+    if (cutoffMsgIdx < 0)
+      return messages;
+    return messages.map((msg, msgIdx) => {
+      if (!msg || typeof msg.content !== "string")
+        return msg;
+      if (msgIdx > cutoffMsgIdx)
+        return msg;
+      if (msgIdx < cutoffMsgIdx) {
+        return { ...msg, content: stripAllTrackerBlocks(msg.content, identifier) };
+      }
+      const ranges = collectTrackerBlockRanges(msg.content, identifier);
+      if (ranges.length === 0)
+        return msg;
+      const keepStart = Math.max(0, ranges.length - keepInCutoff);
+      let out = "";
+      let cursor = 0;
+      for (let i = 0;i < ranges.length; i += 1) {
+        const r = ranges[i];
+        out += msg.content.slice(cursor, r.start);
+        if (i >= keepStart)
+          out += msg.content.slice(r.start, r.end);
+        cursor = r.end;
+      }
+      out += msg.content.slice(cursor);
+      return { ...msg, content: out.replace(/\n\s*\n\s*\n/g, `
+
+`).trim() };
+    });
+  }
+  function countMatchingTrackerBlocksInMessage(content) {
+    if (!content)
+      return 0;
+    let count = 0;
+    const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
+    for (const match of content.matchAll(fenceRe)) {
+      if (match[0])
+        count++;
+    }
+    const tagRe = buildTrackerTagRegex(config.trackerTagName, "gi");
+    const cleanIdentifier = sanitizeIdentifier(config.codeBlockIdentifier);
+    for (const match of content.matchAll(tagRe)) {
+      const attrs = parseTagAttributes(match[1] || "");
+      const typeAttr = sanitizeIdentifier(attrs.type || "");
+      if (typeAttr && typeAttr !== cleanIdentifier)
+        continue;
+      if (match[0])
+        count++;
+    }
+    count += legacyHiddenDivTrackerRanges(content).length;
+    return count;
+  }
+  function countTrackersInMessages(messages, maxNeeded = Number.MAX_SAFE_INTEGER) {
+    let count = 0;
+    for (let i = messages.length - 1;i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (!msg || typeof msg.content !== "string")
+        continue;
+      count += countMatchingTrackerBlocksInMessage(msg.content);
+      if (count >= maxNeeded)
+        return count;
+    }
+    return count;
+  }
+  function buildTrackerInjectionBlock(entries) {
+    if (entries.length === 1) {
+      return `Previous tracker state:
+${formatTrackerForPrompt(entries[0].payload)}`;
+    }
+    const snapshots = entries.map((entry, index) => `Snapshot ${index + 1}:
+${formatTrackerForPrompt(entry.payload)}`).join(`
+
+`);
+    return `Previous tracker states (oldest \u2192 newest):
+
+${snapshots}`;
+  }
+  function withTrailingDirective(messages, directive) {
+    if (!directive)
+      return messages;
+    const injected = messages.slice();
+    injected.splice(Math.max(0, injected.length - 1), 0, { role: "system", content: directive });
+    return injected;
+  }
+  return { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective };
+}
+
+// src/backend/conceptionRules.ts
+var CONCEPTION_CONFIG = {
+  threshold: 85,
+  autoAt: 100,
+  earlyLutealMaxDay: 19
+};
+function getCharactersFromPayload(payload) {
+  const chars = payload.characters;
+  if (!Array.isArray(chars))
+    return [];
+  return chars.filter((c) => c && typeof c === "object" && !Array.isArray(c));
+}
+function isFemaleOrFuta(stats) {
+  const sex = String(stats.sex || "").toLowerCase();
+  return ["female", "futanari", "futa", "both", "intersex", "hermaphrodite"].includes(sex);
+}
+function isInFertileWindow(stats) {
+  const stage = String(stats.cycle_stage || "").toLowerCase();
+  const stageId = Number(stats.cycle_stage_id || 0);
+  if (stage === "ovulation" || stageId === 3)
+    return true;
+  if (stage === "rut" || stageId === 6)
+    return true;
+  if (stage === "luteal" || stageId === 4) {
+    const day = Number(stats.cycle_day || 0);
+    return day > 0 && day <= CONCEPTION_CONFIG.earlyLutealMaxDay;
+  }
+  return false;
+}
+function extractCurrentDate(payload) {
+  const world = payload.worldData;
+  const date = world?.current_date;
+  if (typeof date === "string" && date.trim())
+    return date.trim();
+  return new Date().toISOString().slice(0, 10);
+}
+function isAlreadyConceivedOrPregnant(stats) {
+  return stats.preg === true || stats.conceived === true || stats.conception_date === true;
+}
+function coinFlip() {
+  return Math.random() < 0.5;
+}
+
+// src/backend/conceptionFlow.ts
+function latestNarrativeBeat(messages) {
+  for (let i = messages.length - 1;i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!msg || msg.role !== "user" || typeof msg.content !== "string" || !msg.content.trim())
+      continue;
+    return msg.content;
+  }
+  return "";
+}
+function planForcedConception(history, names, conceptionDate) {
+  if (names.length === 0 || history.length === 0)
+    return null;
+  const latest = history[history.length - 1];
+  const parsed = parseTrackerPayload(latest.payload);
+  if (!parsed)
+    return null;
+  const characters = getCharactersFromPayload(parsed);
+  let mutated = false;
+  for (const char of characters) {
+    if (typeof char.name !== "string" || !names.includes(char.name))
+      continue;
+    if (char.preg === true || char.conceived === true)
+      continue;
+    char.conceived = true;
+    if (typeof char.conception_date !== "string" || !char.conception_date.trim()) {
+      char.conception_date = conceptionDate;
+    }
+    mutated = true;
+  }
+  if (!mutated)
+    return null;
+  const newPayload = JSON.stringify(parsed, null, 2);
+  return { messageId: latest.messageId, oldPayload: latest.payload, newPayload };
+}
+function rewriteTrackerInMessages(messages, oldPayload, newPayload, extractTrackerPayloadFromMessage) {
+  const oldTrim = oldPayload.trim();
+  if (!oldTrim || oldTrim === newPayload.trim())
+    return;
+  for (let i = 0;i < messages.length; i += 1) {
+    const msg = messages[i];
+    if (!msg || typeof msg.content !== "string")
+      continue;
+    const found = extractTrackerPayloadFromMessage(msg.content);
+    if (!found || found.trim() !== oldTrim)
+      continue;
+    messages[i] = { ...msg, content: msg.content.replace(oldPayload, newPayload) };
+  }
+}
+function buildConceptionDirective(names) {
+  if (names.length === 0)
+    return "";
+  const subject = names.length === 1 ? names[0] : names.join(", ");
+  const verb = names.length === 1 ? "has" : "have";
+  const pronoun = names.length === 1 ? "her" : "them";
+  return `CONCEPTION DIRECTIVE: ${subject} ${verb} conceived. The prior tracker has been updated in-place to reflect this \u2014 \`conceived: true\` with \`conception_date\` set. PRESERVE this state on the next tracker emission; do not revert ${pronoun} to \`conceived: false\`. Do NOT set \`preg: true\` yet; that transition happens later as the narrative reveals the pregnancy.`;
+}
+
+// src/backend/promptInterceptor.ts
+function createPromptInterceptor(deps) {
+  const {
+    spindle: spindle2,
+    hasPermission,
+    trackerMessageCodec,
+    rehydrateChatTrackerHistory,
+    getRecentChatTrackers,
+    getChatTrackerHistory,
+    extractTrackerPayloadFromMessage,
+    checkConceptionTriggers,
+    commitForcedConception
+  } = deps;
+  const { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective } = createTrackerPromptRetention(deps.readConfig, trackerMessageCodec);
+  function resolveInterceptorChatId(context) {
+    if (context && typeof context === "object") {
+      const obj = context;
+      const candidates = [
+        obj.chatId,
+        obj.chat_id,
+        obj.chat?.id,
+        obj.generation?.chatId
+      ];
+      for (const c of candidates) {
+        if (typeof c === "string" && c.trim().length > 0)
+          return c;
+      }
+    }
+    return deps.readActiveChatId();
+  }
+  let interceptorRegistered = false;
+  function tryRegisterInterceptor() {
+    if (interceptorRegistered)
+      return;
+    if (!hasPermission("interceptor"))
+      return;
+    try {
+      spindle2.registerInterceptor(async (messages, context) => {
+        const keepNewest = deps.readConfig().retainTrackerCount;
+        if (keepNewest < 0)
+          return messages;
+        if (!Array.isArray(messages) || messages.length === 0)
+          return messages;
+        const retained = stripOldTrackerBlocksGlobal(messages, deps.readConfig().codeBlockIdentifier, keepNewest);
+        if (keepNewest === 0)
+          return retained;
+        const chatId = resolveInterceptorChatId(context);
+        let conceptionDirective = "";
+        if (chatId) {
+          await rehydrateChatTrackerHistory(chatId);
+          const preMutationLatest = getRecentChatTrackers(chatId, 1);
+          const latestPayload = preMutationLatest.length > 0 ? parseTrackerPayload(preMutationLatest[preMutationLatest.length - 1].payload) : null;
+          if (latestPayload) {
+            const conceptionNames = await checkConceptionTriggers(chatId, latestPayload, latestNarrativeBeat(retained));
+            if (conceptionNames.length > 0) {
+              const plan = planForcedConception(getChatTrackerHistory(chatId), conceptionNames, extractCurrentDate(latestPayload));
+              if (plan) {
+                commitForcedConception(chatId, plan);
+                rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload, extractTrackerPayloadFromMessage);
+              }
+              conceptionDirective = buildConceptionDirective(conceptionNames);
+            }
+          }
+        }
+        const currentCount = countTrackersInMessages(retained, keepNewest);
+        if (currentCount >= keepNewest) {
+          return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
+        }
+        if (!chatId)
+          return formatTrackerBlocksInMessages(retained);
+        const needed = keepNewest - currentCount;
+        const history = getRecentChatTrackers(chatId, keepNewest);
+        if (history.length === 0) {
+          return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
+        }
+        const existingPayloads = new Set;
+        for (const msg of retained) {
+          if (!msg || typeof msg.content !== "string")
+            continue;
+          const payload = extractTrackerPayloadFromMessage(msg.content);
+          if (payload)
+            existingPayloads.add(payload.trim());
+        }
+        const toInject = history.slice().reverse().filter((entry) => !existingPayloads.has(entry.payload.trim())).slice(0, needed).reverse();
+        if (toInject.length === 0)
+          return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
+        const block = buildTrackerInjectionBlock(toInject);
+        const promptMessages = formatTrackerBlocksInMessages(retained);
+        let lastAssistantIdx = -1;
+        for (let i = promptMessages.length - 1;i >= 0; i -= 1) {
+          const m = promptMessages[i];
+          if (m && m.role === "assistant" && typeof m.content === "string") {
+            lastAssistantIdx = i;
+            break;
+          }
+        }
+        if (lastAssistantIdx >= 0) {
+          const injected2 = promptMessages.slice();
+          const target = injected2[lastAssistantIdx];
+          const base = typeof target.content === "string" ? target.content.trimEnd() : "";
+          injected2[lastAssistantIdx] = {
+            ...target,
+            content: base ? `${base}
+
+${block}` : block
+          };
+          return withTrailingDirective(injected2, conceptionDirective);
+        }
+        const injected = promptMessages.slice();
+        const insertAt = Math.max(0, injected.length - 1);
+        injected.splice(insertAt, 0, { role: "system", content: block });
+        return withTrailingDirective(injected, conceptionDirective);
+      }, 90);
+      interceptorRegistered = true;
+      spindle2.log.info("Interceptor registered");
+    } catch {
+      spindle2.log.warn("Interceptor registration failed");
+    }
+  }
+  return { tryRegisterInterceptor };
+}
+
+// src/backend/backendMessageContext.ts
+function readMessageContext(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { chatId: null, messageId: null, content: null };
+  }
+  const obj = payload;
+  const nestedMessage = obj.message && typeof obj.message === "object" ? obj.message : {};
+  const nestedChat = obj.chat && typeof obj.chat === "object" ? obj.chat : {};
+  const chatIdCandidates = [obj.chatId, obj.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, obj.id];
+  const messageIdCandidates = [obj.messageId, obj.message_id, nestedMessage.id, nestedMessage.messageId, obj.id];
+  const content = (typeof nestedMessage.content === "string" ? nestedMessage.content : null) || (typeof obj.content === "string" ? obj.content : null);
+  const chatId = chatIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
+  const messageId = messageIdCandidates.find((value) => typeof value === "string" && value.trim().length > 0);
+  return {
+    chatId: chatId || null,
+    messageId: messageId || null,
+    content
+  };
+}
+
+// src/backend/messageEvents.ts
+function registerMessageEvents(deps) {
+  const {
+    spindle: spindle2,
+    ensureConfigForUser,
+    rehydrateChatTrackerHistory,
+    handleSlashCommand,
+    extractTrackerPayloadFromMessage,
+    recordChatTracker,
+    forgetChatTracker,
+    pushMacroValues,
+    trackEvent
+  } = deps;
+  spindle2.on("MESSAGE_SENT", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      const ctx = readMessageContext(payload);
+      const message = ctx.content;
+      if (typeof message !== "string")
+        return;
+      if (ctx.chatId) {
+        deps.setActiveChatId(ctx.chatId);
+        rehydrateChatTrackerHistory(ctx.chatId);
+      }
+      const commandResult = await handleSlashCommand(message, ctx);
+      if (commandResult) {
+        spindle2.sendToFrontend(commandResult, deps.readActiveUserId() || undefined);
+        await trackEvent("sst.command.result", {
+          command: commandResult.payload.command,
+          ok: commandResult.payload.ok,
+          mode: commandResult.payload.mode || "fallback"
+        }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      }
+      const sim = extractTrackerPayloadFromMessage(message);
+      if (sim) {
+        recordChatTracker(ctx.chatId, ctx.messageId, sim);
+        pushMacroValues();
+        await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      }
+    })();
+  });
+  spindle2.on("MESSAGE_EDITED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      const ctx = readMessageContext(payload);
+      if (ctx.chatId)
+        deps.setActiveChatId(ctx.chatId);
+      if (typeof ctx.content !== "string")
+        return;
+      const sim = extractTrackerPayloadFromMessage(ctx.content);
+      if (sim) {
+        recordChatTracker(ctx.chatId, ctx.messageId, sim);
+        pushMacroValues();
+        await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier, source: "message_edited" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+        return;
+      }
+      forgetChatTracker(ctx.chatId, ctx.messageId);
+    })();
+  });
+  spindle2.on("MESSAGE_SWIPED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      if (!payload || typeof payload !== "object")
+        return;
+      const obj = payload;
+      const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
+      if (chatId)
+        deps.setActiveChatId(chatId);
+      const message = obj.message && typeof obj.message === "object" ? obj.message : null;
+      if (!chatId || !message)
+        return;
+      const messageId = typeof message.id === "string" ? message.id : null;
+      if (!messageId)
+        return;
+      const action = typeof obj.action === "string" ? obj.action : "";
+      const activeSwipeId = typeof message.swipe_id === "number" ? message.swipe_id : 0;
+      const activeContent = typeof message.content === "string" ? message.content : Array.isArray(message.swipes) && typeof message.swipes[activeSwipeId] === "string" ? message.swipes[activeSwipeId] : "";
+      const payloadText = extractTrackerPayloadFromMessage(activeContent);
+      if (payloadText) {
+        recordChatTracker(chatId, messageId, payloadText);
+        pushMacroValues();
+      } else {
+        forgetChatTracker(chatId, messageId);
+      }
+      await trackEvent("sst.swipe.synced", { action, swipeId: typeof obj.swipeId === "number" ? obj.swipeId : null }, { chatId });
+    })();
+  });
+  spindle2.on("MESSAGE_TAG_INTERCEPTED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      if (!payload || typeof payload !== "object")
+        return;
+      const obj = payload;
+      const tagName = typeof obj.tagName === "string" ? sanitizeTagName(obj.tagName) : "";
+      if (tagName !== sanitizeTagName(deps.readConfig().trackerTagName))
+        return;
+      const attrs = obj.attrs && typeof obj.attrs === "object" ? obj.attrs : {};
+      const tagType = sanitizeIdentifier(typeof attrs.type === "string" ? attrs.type : "");
+      if (tagType && tagType !== sanitizeIdentifier(deps.readConfig().codeBlockIdentifier))
+        return;
+      const content = typeof obj.content === "string" ? obj.content.trim() : "";
+      if (!content)
+        return;
+      const isStreaming = obj.isStreaming === true;
+      if (isStreaming)
+        return;
+      const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
+      const messageId = typeof obj.messageId === "string" ? obj.messageId : null;
+      if (chatId)
+        deps.setActiveChatId(chatId);
+      recordChatTracker(chatId, messageId, content);
+      pushMacroValues();
+      await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier, source: "message_tag_intercepted" });
+    })();
+  });
+}
+
+// src/shared/fertilityCycleHint.ts
+function pickInitialCycleState(bias) {
+  const roll = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+  switch (bias) {
+    case "menstruating": {
+      const day = roll(1, 5);
+      return { day, description: `menstruating (cycle_stage_id 1)` };
+    }
+    case "start_follicular": {
+      const day = roll(6, 10);
+      return { day, description: `in the early follicular phase (cycle_stage_id 2)` };
+    }
+    case "close_ovulation": {
+      const day = roll(11, 13);
+      return { day, description: `late in the follicular phase, approaching ovulation (cycle_stage_id 2)` };
+    }
+    case "ovulating": {
+      const day = roll(14, 16);
+      return { day, description: `ovulating (cycle_stage_id 3)` };
+    }
+    case "start_luteal": {
+      const day = roll(17, 21);
+      return { day, description: `in the early luteal phase (cycle_stage_id 4)` };
+    }
+    case "end_luteal": {
+      const day = roll(24, 28);
+      return { day, description: `late in the luteal phase, pre-menstrual (cycle_stage_id 4)` };
+    }
+    case "random":
+    default: {
+      const day = roll(1, 28);
+      return { day, description: "" };
+    }
+  }
+}
+function buildFirstMessageHint(bias) {
+  const { day, description } = pickInitialCycleState(bias);
+  if (!description && bias !== "random")
+    return "";
+  const qualifier = description ? `, ${description}` : "";
+  return `INITIAL STATE: Female and Futanari characters begin on day ${day} of their fertility cycle already${qualifier}. Reflect this in the first tracker.`;
+}
+
+// src/backend/chatLifecycleEvents.ts
+function registerChatLifecycleEvents(deps) {
+  const {
+    spindle: spindle2,
+    ensureConfigForUser,
+    selectChat,
+    rehydrateChatTrackerHistory,
+    getChatTrackerHistory,
+    pushMacroValues,
+    forgetChatTracker,
+    hasPermission,
+    extractTrackerPayloadFromMessage,
+    recordChatTracker,
+    enqueueSecondaryGeneration
+  } = deps;
+  spindle2.on("GENERATION_STARTED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      if (!payload || typeof payload !== "object")
+        return;
+      const obj = payload;
+      const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
+      if (!chatId)
+        return;
+      if (!deps.isSelectedChatKnown())
+        selectChat(chatId);
+      deps.setActiveChatId(chatId);
+      await rehydrateChatTrackerHistory(chatId);
+      const previousHint = deps.readFirstMessageFertilityHint();
+      deps.writeFirstMessageFertilityHint("");
+      try {
+        const isNewChat = getChatTrackerHistory(chatId).length === 0 && await (async () => {
+          const msgs = await spindle2.chat.getMessages(chatId);
+          return msgs.filter((m) => m.role === "user").length === 1;
+        })();
+        if (isNewChat) {
+          deps.writeFirstMessageFertilityHint(buildFirstMessageHint(deps.readConfig().fertilityCycleBias));
+        }
+      } catch {}
+      if (previousHint !== deps.readFirstMessageFertilityHint())
+        pushMacroValues();
+    })();
+  });
+  spindle2.on("CHAT_SWITCHED", (payload, userId) => {
+    const obj = payload && typeof payload === "object" ? payload : {};
+    const chatId = typeof obj.chatId === "string" ? obj.chatId : typeof obj.chat_id === "string" ? obj.chat_id : null;
+    selectChat(chatId);
+    (async () => {
+      await ensureConfigForUser(userId);
+      if (chatId)
+        deps.setActiveChatId(chatId);
+      if (chatId) {
+        await rehydrateChatTrackerHistory(chatId);
+      }
+    })();
+  });
+  spindle2.on("MESSAGE_DELETED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      const ctx = readMessageContext(payload);
+      if (!ctx.chatId || !ctx.messageId)
+        return;
+      forgetChatTracker(ctx.chatId, ctx.messageId);
+      spindle2.log.info(`Forgot tracker side-channel entry for deleted message ${ctx.messageId} in chat ${ctx.chatId}`);
+    })();
+  });
+  spindle2.on("GENERATION_ENDED", (payload, userId) => {
+    (async () => {
+      await ensureConfigForUser(userId);
+      const ctx = readMessageContext(payload);
+      if (ctx.chatId) {
+        deps.setActiveChatId(ctx.chatId);
+        rehydrateChatTrackerHistory(ctx.chatId);
+      }
+      if (!deps.readConfig().useSecondaryLLM)
+        return;
+      if (!hasPermission("generation") || !hasPermission("chat_mutation"))
+        return;
+      if (!ctx.chatId)
+        return;
+      let chatMessages;
+      try {
+        chatMessages = await spindle2.chat.getMessages(ctx.chatId);
+      } catch {
+        return;
+      }
+      const latestAssistant = chatMessages.findLast((m) => m.role === "assistant");
+      if (!latestAssistant)
+        return;
+      const existingPayload = extractTrackerPayloadFromMessage(latestAssistant.content);
+      if (existingPayload) {
+        recordChatTracker(ctx.chatId, latestAssistant.id, existingPayload);
+        return;
+      }
+      enqueueSecondaryGeneration(ctx.chatId, latestAssistant.id);
+    })();
+  });
+}
+
+// src/backend/conceptionGate.ts
+function createConceptionGate(deps) {
+  const { spindle: spindle2, hasPermission, typeSafeCorsTransport, trackEvent, getChatTrackerHistory } = deps;
+  const conceptionNotified = new Set;
+  async function checkConceptionTriggers(chatId, payload, narrative) {
+    if (!chatId)
+      return [];
+    const characters = getCharactersFromPayload(payload);
+    const triggered = [];
+    const grayZone = [];
+    for (const stats of characters) {
+      if (!isFemaleOrFuta(stats))
+        continue;
+      if (isAlreadyConceivedOrPregnant(stats)) {
+        const key2 = `${chatId}::${stats.name}`;
+        if (conceptionNotified.has(key2))
+          conceptionNotified.delete(key2);
+        continue;
+      }
+      if (!isInFertileWindow(stats))
+        continue;
+      const fullness = Number(stats.womb_fullness_pct);
+      if (!Number.isFinite(fullness) || fullness <= CONCEPTION_CONFIG.threshold)
+        continue;
+      const name = String(stats.name || "Unknown");
+      const key = `${chatId}::${name}`;
+      if (conceptionNotified.has(key)) {
+        triggered.push(name);
+        continue;
+      }
+      if (fullness >= CONCEPTION_CONFIG.autoAt) {
+        conceptionNotified.add(key);
+        triggered.push(name);
+      } else {
+        grayZone.push({ name, stats });
+      }
+    }
+    if (grayZone.length === 0)
+      return triggered;
+    for (const name of await resolveGrayZoneConception(chatId, grayZone, narrative)) {
+      conceptionNotified.add(`${chatId}::${name}`);
+      triggered.push(name);
+    }
+    return triggered;
+  }
+  async function resolveGrayZoneConception(chatId, candidates, narrative) {
+    if (deps.readConfig().typeSafeEnabled && deps.readConfig().typeSafeConception && deps.readConfig().typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
+      try {
+        const plan = buildConceptionQuestions(candidates);
+        const answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: deps.readConfig().typeSafeApiKey.trim(), model: deps.readConfig().typeSafeModel }, { scene: narrative.slice(0, VERIFY_NARRATIVE_CHAR_CAP), ...plan.state }, plan.questions);
+        const fired = interpretConceptionAnswers(answers, candidates);
+        await trackEvent("sst.typesafe.conception_decided", { fired, considered: candidates.map((c) => c.name) }, { chatId: chatId ?? undefined });
+        return fired;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        spindle2.log.warn(`TypeSafe conception gate unavailable, falling back to coin flip: ${detail}`);
+        await trackEvent("sst.typesafe.error", { stage: "conception", error: detail }, { level: "warn", chatId: chatId ?? undefined });
+      }
+    }
+    return candidates.filter(() => coinFlip()).map((c) => c.name);
+  }
+  function commitForcedConception(chatId, plan) {
+    const history = getChatTrackerHistory(chatId);
+    const idx = history.findIndex((entry) => entry.messageId === plan.messageId);
+    if (idx === -1)
+      return;
+    history[idx] = { ...history[idx], payload: plan.newPayload };
+  }
+  return { checkConceptionTriggers, commitForcedConception };
+}
+
+// src/backend/trackerExample.ts
+function setDeep(target, path, value) {
+  const parts = path.split(".").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0)
+    return;
+  let cursor = target;
+  for (let i = 0;i < parts.length - 1; i += 1) {
+    const key = parts[i];
+    const existing = cursor[key];
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      cursor[key] = {};
+    }
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+function inferExampleValue(key, description) {
+  const k = key.toLowerCase();
+  const d = description.toLowerCase();
+  if (k === "name")
+    return "Character Name";
+  if (k.includes("date") && k.includes("time"))
+    return "YYYY-MM-DD HH:MM";
+  if (k.includes("date"))
+    return "YYYY-MM-DD";
+  if (k.includes("time"))
+    return "HH:MM";
+  if (k.includes("bg") || k.includes("color"))
+    return "HEX_COLOR";
+  if (/[[(](?:number|integer|int|float)[\])]/.test(d))
+    return 0;
+  if (/[[(](?:boolean|bool)[\])]/.test(d))
+    return false;
+  if (/[[(](?:string|text)[\])]/.test(d))
+    return "";
+  if (/[[(](?:array|list)[\])]/.test(d)) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  if (/\b\d+\s*=/.test(d))
+    return 0;
+  if (/-?\d+\s*(?:to|[-\u2013\u2014])\s*-?\d+/.test(d))
+    return 0;
+  if (k === "preg" || k === "inactive" || k === "alive" || k === "dead")
+    return false;
+  if (/\btrue\/false\b|\bboolean\b/.test(d))
+    return false;
+  if (k.includes("icon") || k.includes("thought") || k.includes("status"))
+    return "";
+  if (d.includes("array") || d.includes("[{")) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  const numericKeySignals = [
+    "ap",
+    "dp",
+    "tp",
+    "cp",
+    "hp",
+    "mp",
+    "xp",
+    "sp",
+    "affection",
+    "desire",
+    "trust",
+    "contempt",
+    "affinity",
+    "health",
+    "vitality",
+    "level",
+    "turn",
+    "count",
+    "days",
+    "months",
+    "years",
+    "hours",
+    "minutes",
+    "score",
+    "points",
+    "rating",
+    "index",
+    "react",
+    "reason"
+  ];
+  if (numericKeySignals.some((term) => k.includes(term)))
+    return 0;
+  if (d.includes("number"))
+    return 0;
+  if (k.endsWith("s") && !k.endsWith("us") && !k.endsWith("ss") && !k.endsWith("is")) {
+    if (k.includes("connection"))
+      return [{ name: "Target", affinity: 0 }];
+    return [];
+  }
+  return "";
+}
+
+// src/backend/trackerCommandText.ts
+function buildTemplateExampleData(preset) {
+  const fields = Array.isArray(preset.customFields) ? preset.customFields : [];
+  const worldData = {
+    current_date: "YYYY-MM-DD",
+    current_time: "HH:MM"
+  };
+  const character = {
+    name: "Character Name"
+  };
+  for (const field of fields) {
+    const key = typeof field?.key === "string" ? field.key.trim() : "";
+    if (!key)
+      continue;
+    const description = typeof field?.description === "string" ? field.description : "";
+    const sample = inferExampleValue(key, description);
+    if (key.startsWith("worldData.")) {
+      setDeep(worldData, key.slice("worldData.".length), sample);
+      continue;
+    }
+    const normalizedKey = key.replace(/^character\./i, "").replace(/^characters\[\]\./i, "");
+    if (!normalizedKey || normalizedKey.toLowerCase() === "name")
+      continue;
+    setDeep(character, normalizedKey, sample);
+  }
+  return {
+    worldData,
+    characters: [character]
+  };
+}
+function formatTrackerPayload(data, format, identifier, tagName) {
+  const safeTagName = sanitizeTagName(tagName);
+  const safeIdentifier = sanitizeIdentifier(identifier);
+  const body = format === "yaml" ? stringify3(data).trimEnd() : JSON.stringify(data, null, 2);
+  return `<${safeTagName} type="${safeIdentifier}">
+${body}
+</${safeTagName}>`;
+}
+function replaceTrackerBlock(content, identifier, replacementBlock, tagName) {
+  const tagRe = buildTrackerTagRegex(tagName, "ig");
+  const desiredType = sanitizeIdentifier(identifier);
+  let replaced = false;
+  const withTag = content.replace(tagRe, (full, attrsRaw) => {
+    const attrs = parseTagAttributes(String(attrsRaw || ""));
+    const foundType = sanitizeIdentifier(attrs.type || "");
+    if (foundType && foundType !== desiredType)
+      return full;
+    if (replaced)
+      return full;
+    replaced = true;
+    return replacementBlock;
+  });
+  if (replaced)
+    return withTag;
+  const re = buildTrackerFenceRegex(identifier, "i");
+  return withTag.replace(re, replacementBlock);
+}
+
+// src/backend/macroPublisher.ts
+function createMacroPublisher(deps) {
+  const { spindle: spindle2 } = deps;
+  function buildTemplateExampleData2() {
+    return buildTemplateExampleData(deps.getActivePreset());
+  }
+  function buildExampleTrackerBlock(format, identifier) {
+    const data = buildTemplateExampleData2();
+    return formatTrackerPayload2(data, format, identifier);
+  }
+  function formatTrackerPayload2(data, format, identifier) {
+    return formatTrackerPayload(data, format, identifier, deps.readConfig().trackerTagName);
+  }
+  function registerMacros() {
+    spindle2.registerMacro({
+      name: "sim_format",
+      category: "extension:silly_sim_tracker",
+      description: "Example tracker tag format",
+      returnType: "string",
+      handler: ""
+    });
+    spindle2.registerMacro({
+      name: "sim_tracker",
+      category: "extension:silly_sim_tracker",
+      description: "Main tracker instructions for the active template",
+      returnType: "string",
+      handler: ""
+    });
+    spindle2.registerMacro({
+      name: "last_sim_stats",
+      category: "extension:silly_sim_tracker",
+      description: "The latest tracker state as a compact Markdown list",
+      returnType: "string",
+      handler: ""
+    });
+  }
+  function pushMacroValues() {
+    const fmt = buildExampleTrackerBlock(deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+    spindle2.updateMacroValue("sim_format", fmt);
+    const tag = sanitizeTagName(deps.readConfig().trackerTagName);
+    const id = sanitizeIdentifier(deps.readConfig().codeBlockIdentifier);
+    const rawBase = deps.getActivePreset().sysPrompt || "";
+    const base = sanitizeSysPromptForWireFormat(rawBase, tag, id);
+    const directive = [
+      "IMPORTANT OUTPUT FORMAT:",
+      "Do not emit markdown code fences for tracker data.",
+      "Emit a single XML block using this exact wrapper:",
+      `<${tag} type="${id}">`,
+      "{...tracker JSON or YAML...}",
+      `</${tag}>`,
+      "Narrative text must remain outside the tracker tag."
+    ].join(`
+`);
+    let simTracker = base ? directive + `
+
+` + base.replace(/\{\{sim_format\}\}/g, fmt) : directive + `
+
+` + fmt;
+    if (deps.readFirstMessageFertilityHint()) {
+      simTracker += `
+
+` + deps.readFirstMessageFertilityHint();
+    }
+    spindle2.updateMacroValue("sim_tracker", simTracker);
+    deps.publishSelectedTracker();
+  }
+  return { registerMacros, pushMacroValues, buildExampleTrackerBlock, formatTrackerPayload: formatTrackerPayload2 };
+}
+
+// src/backend/commandEngine.ts
+function createCommandEngine(deps) {
+  function formatTrackerPayload2(data, format, identifier) {
+    return formatTrackerPayload(data, format, identifier, deps.readConfig().trackerTagName);
+  }
+  function makeStarterTrackerBlock() {
+    const config = deps.readConfig();
+    return formatTrackerPayload2(buildTemplateExampleData(deps.getActivePreset()), config.trackerFormat, config.codeBlockIdentifier);
+  }
+  function replaceTrackerBlock2(content, identifier, replacementBlock) {
+    return replaceTrackerBlock(content, identifier, replacementBlock, deps.readConfig().trackerTagName);
+  }
+  function buildCommandResponse(payload) {
+    return { type: "command_result", payload };
+  }
+  async function mutateChatForCommand(command, arg1, ctx) {
+    if (!deps.hasChatMutationPermission() || !ctx.chatId)
+      return null;
+    let messages;
+    try {
+      messages = await deps.getMessages(ctx.chatId);
+    } catch {
+      return null;
+    }
+    let latestTrackerMessage = null;
+    for (let i = messages.length - 1;i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (deps.extractTrackerPayloadFromMessage(msg.content)) {
+        latestTrackerMessage = msg;
+        break;
+      }
+    }
+    if (command === "/sst-add") {
+      const target = messages.findLast((msg) => msg.role === "assistant") || null;
+      if (!target) {
+        return {
+          command: "sst-add",
+          ok: false,
+          message: "No assistant message found to append tracker tag.",
+          mode: "chat_mutation"
+        };
+      }
+      if (deps.extractTrackerPayloadFromMessage(target.content)) {
+        return {
+          command: "sst-add",
+          ok: false,
+          message: "Latest assistant message already contains a tracker tag.",
+          mode: "chat_mutation"
+        };
+      }
+      const block = makeStarterTrackerBlock();
+      const updatedContent2 = `${target.content.trimEnd()}
+
+${block}`;
+      await deps.updateMessage(ctx.chatId, target.id, { content: updatedContent2 });
+      await deps.trackEvent("sst.command.add", { mode: "chat_mutation" }, { chatId: ctx.chatId });
+      return {
+        command: "sst-add",
+        ok: true,
+        message: "Added starter tracker tag to latest assistant message.",
+        block,
+        mode: "chat_mutation"
+      };
+    }
+    if (!latestTrackerMessage) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "No tracker tag found in current chat.",
+        mode: "chat_mutation"
+      };
+    }
+    const raw = deps.extractTrackerPayloadFromMessage(latestTrackerMessage.content);
+    if (!raw) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "Latest tracker tag could not be read.",
+        mode: "chat_mutation"
+      };
+    }
+    const parsed = parseTrackerPayload(raw);
+    if (!parsed) {
+      return {
+        command: command.replace("/", ""),
+        ok: false,
+        message: "Latest tracker tag is invalid and cannot be rewritten.",
+        mode: "chat_mutation"
+      };
+    }
+    const targetFormat = command === "/sst-convert" ? arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat : deps.readConfig().trackerFormat;
+    const replacement = formatTrackerPayload2(parsed, targetFormat, deps.readConfig().codeBlockIdentifier);
+    const updatedContent = replaceTrackerBlock2(latestTrackerMessage.content, deps.readConfig().codeBlockIdentifier, replacement);
+    await deps.updateMessage(ctx.chatId, latestTrackerMessage.id, { content: updatedContent });
+    deps.writeLastSimStats(ctx.chatId, targetFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2), latestTrackerMessage.id);
+    deps.pushMacroValues();
+    await deps.trackEvent(command === "/sst-convert" ? "sst.command.convert" : "sst.command.regen", { mode: "chat_mutation", format: targetFormat }, { chatId: ctx.chatId });
+    return {
+      command: command.replace("/", ""),
+      ok: true,
+      message: command === "/sst-convert" ? `Converted latest tracker to ${targetFormat.toUpperCase()} and updated chat message.` : "Rebuilt latest tracker tag in preferred format and updated chat message.",
+      block: replacement,
+      mode: "chat_mutation"
+    };
+  }
+  async function handleSlashCommand(content, ctx) {
+    const trimmed = content.trim();
+    if (!trimmed.startsWith("/sst-"))
+      return null;
+    const [commandRaw, arg1] = trimmed.split(/\s+/);
+    const command = commandRaw;
+    if (!["/sst-add", "/sst-convert", "/sst-regen"].includes(command)) {
+      return buildCommandResponse({
+        command: commandRaw.replace("/", ""),
+        ok: false,
+        message: "Unknown SST command. Supported: /sst-add, /sst-convert, /sst-regen",
+        mode: "fallback"
+      });
+    }
+    const chatResult = await mutateChatForCommand(command, arg1, ctx);
+    if (chatResult) {
+      return buildCommandResponse(chatResult);
+    }
+    if (command === "/sst-convert") {
+      const target = arg1 === "yaml" ? "yaml" : arg1 === "json" ? "json" : deps.readConfig().trackerFormat;
+      const lastSimStats2 = deps.readLastSimStats(ctx.chatId);
+      if (!lastSimStats2 || lastSimStats2 === "{}") {
+        return buildCommandResponse({
+          command: "sst-convert",
+          ok: false,
+          message: "No tracker tag found yet.",
+          mode: "fallback"
+        });
+      }
+      const parsed2 = parseTrackerPayload(lastSimStats2);
+      if (!parsed2) {
+        return buildCommandResponse({
+          command: "sst-convert",
+          ok: false,
+          message: "Latest tracker tag is invalid and cannot be converted.",
+          mode: "fallback"
+        });
+      }
+      const block2 = formatTrackerPayload2(parsed2, target, deps.readConfig().codeBlockIdentifier);
+      deps.writeLastSimStats(ctx.chatId, target === "yaml" ? stringify3(parsed2) : JSON.stringify(parsed2, null, 2));
+      deps.pushMacroValues();
+      await deps.trackEvent("sst.command.convert", { mode: "fallback", format: target }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      return buildCommandResponse({
+        command: "sst-convert",
+        ok: true,
+        message: `Converted latest tracker to ${target.toUpperCase()}.`,
+        block: block2,
+        mode: "fallback"
+      });
+    }
+    if (command === "/sst-add") {
+      const block2 = makeStarterTrackerBlock();
+      await deps.trackEvent("sst.command.add", { mode: "fallback" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+      return buildCommandResponse({
+        command: "sst-add",
+        ok: true,
+        message: "Generated a starter tracker tag.",
+        block: block2,
+        mode: "fallback"
+      });
+    }
+    const lastSimStats = deps.readLastSimStats(ctx.chatId);
+    if (!lastSimStats || lastSimStats === "{}") {
+      return buildCommandResponse({
+        command: "sst-regen",
+        ok: false,
+        message: "No tracker tag to regenerate yet. Use /sst-add first.",
+        mode: "fallback"
+      });
+    }
+    const parsed = parseTrackerPayload(lastSimStats);
+    if (!parsed) {
+      return buildCommandResponse({
+        command: "sst-regen",
+        ok: false,
+        message: "Latest tracker is invalid and cannot be regenerated.",
+        mode: "fallback"
+      });
+    }
+    const block = formatTrackerPayload2(parsed, deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+    await deps.trackEvent("sst.command.regen", { mode: "fallback", format: deps.readConfig().trackerFormat }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
+    return buildCommandResponse({
+      command: "sst-regen",
+      ok: true,
+      message: "Rebuilt latest tracker tag in preferred format.",
+      block,
+      mode: "fallback"
+    });
+  }
+  return { handleSlashCommand };
+}
+
+// src/backend/settingsStore.ts
+var TYPE_SAFE_ENCLAVE_KEY = "typesafe_api_key";
+var CONFIG_PATH = "preferences.json";
+function createSettingsStore(deps) {
+  async function loadTypeSafeApiKey(userId) {
+    try {
+      return await deps.enclaveGet(TYPE_SAFE_ENCLAVE_KEY, userId) ?? "";
+    } catch (err) {
+      deps.logWarn(`Enclave unavailable; TypeSafe key not loaded: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return "";
+  }
+  async function loadConfig(userId, onNormalized) {
+    if (!userId)
+      throw new Error("A user id is required to load SimTracker settings.");
+    try {
+      const parsed = await deps.getJson(CONFIG_PATH, {
+        fallback: { ...DEFAULT_CONFIG },
+        userId
+      });
+      const config = normalizeStoredConfig(parsed);
+      onNormalized(config);
+      config.typeSafeApiKey = await loadTypeSafeApiKey(userId);
+      return config;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.logError(`Failed to load SimTracker settings for user ${userId}: ${message}`);
+      throw new Error(`Unable to load saved settings: ${message}`);
+    }
+  }
+  async function saveConfig(userId, configToSave) {
+    if (!userId)
+      throw new Error("A user id is required to save SimTracker settings.");
+    await deps.setJson(CONFIG_PATH, { ...configToSave, typeSafeApiKey: "" }, { indent: 2, userId });
+  }
+  async function syncTypeSafeKeyToEnclave(userId, nextKey, previousKey) {
+    const next = nextKey.trim();
+    try {
+      if (next && next !== previousKey) {
+        await deps.enclavePut(TYPE_SAFE_ENCLAVE_KEY, next, userId);
+      } else if (!next && previousKey) {
+        await deps.enclaveDelete(TYPE_SAFE_ENCLAVE_KEY, userId);
+      }
+    } catch (err) {
+      deps.logWarn(`Failed to persist the TypeSafe key to the enclave: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { loadConfig, saveConfig, syncTypeSafeKeyToEnclave };
+}
+
 // src/backend/index.ts
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
@@ -14985,7 +15941,6 @@ var activeUserId = null;
 var loadedConfigUserId = null;
 var firstMessageFertilityHint = "";
 var activeChatId = null;
-var conceptionNotified = new Set;
 var runtime = {
   grantedPermissions: new Set,
   seededPresets: [],
@@ -15084,7 +16039,7 @@ var { handleSlashCommand } = createCommandEngine({
   hasChatMutationPermission: () => hasPermission("chat_mutation"),
   getMessages: (chatId) => spindle.chat.getMessages(chatId),
   updateMessage: (chatId, messageId, change) => spindle.chat.updateMessage(chatId, messageId, change),
-  pushMacroValues,
+  pushMacroValues: () => pushMacroValues(),
   trackEvent
 });
 var handleImportPresetFile = createImportService({
@@ -15098,7 +16053,7 @@ var handleImportPresetFile = createImportService({
     config = value;
   },
   saveConfig: (userId) => saveConfig(userId),
-  pushMacroValues,
+  pushMacroValues: () => pushMacroValues(),
   sendConfigState: (userId) => sendConfigState(userId),
   trackEvent
 });
@@ -15121,80 +16076,21 @@ async function trackEvent(eventName, payload, options) {
     await spindle.events.track(eventName, payload, options);
   } catch {}
 }
-async function checkConceptionTriggers(chatId, payload, narrative) {
-  if (!chatId)
-    return [];
-  const characters = getCharactersFromPayload(payload);
-  const triggered = [];
-  const grayZone = [];
-  for (const stats of characters) {
-    if (!isFemaleOrFuta(stats))
-      continue;
-    if (isAlreadyConceivedOrPregnant(stats)) {
-      const key2 = `${chatId}::${stats.name}`;
-      if (conceptionNotified.has(key2))
-        conceptionNotified.delete(key2);
-      continue;
-    }
-    if (!isInFertileWindow(stats))
-      continue;
-    const fullness = Number(stats.womb_fullness_pct);
-    if (!Number.isFinite(fullness) || fullness <= CONCEPTION_CONFIG.threshold)
-      continue;
-    const name = String(stats.name || "Unknown");
-    const key = `${chatId}::${name}`;
-    if (conceptionNotified.has(key)) {
-      triggered.push(name);
-      continue;
-    }
-    if (fullness >= CONCEPTION_CONFIG.autoAt) {
-      conceptionNotified.add(key);
-      triggered.push(name);
-    } else {
-      grayZone.push({ name, stats });
-    }
-  }
-  if (grayZone.length === 0)
-    return triggered;
-  for (const name of await resolveGrayZoneConception(chatId, grayZone, narrative)) {
-    conceptionNotified.add(`${chatId}::${name}`);
-    triggered.push(name);
-  }
-  return triggered;
-}
-async function resolveGrayZoneConception(chatId, candidates, narrative) {
-  if (config.typeSafeEnabled && config.typeSafeConception && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
-    try {
-      const plan = buildConceptionQuestions(candidates);
-      const answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: config.typeSafeApiKey.trim(), model: config.typeSafeModel }, { scene: narrative.slice(0, VERIFY_NARRATIVE_CHAR_CAP), ...plan.state }, plan.questions);
-      const fired = interpretConceptionAnswers(answers, candidates);
-      await trackEvent("sst.typesafe.conception_decided", { fired, considered: candidates.map((c) => c.name) }, { chatId: chatId ?? undefined });
-      return fired;
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      spindle.log.warn(`TypeSafe conception gate unavailable, falling back to coin flip: ${detail}`);
-      await trackEvent("sst.typesafe.error", { stage: "conception", error: detail }, { level: "warn", chatId: chatId ?? undefined });
-    }
-  }
-  return candidates.filter(() => coinFlip()).map((c) => c.name);
-}
-function commitForcedConception(chatId, plan) {
-  const history = getChatTrackerHistory(chatId);
-  const idx = history.findIndex((entry) => entry.messageId === plan.messageId);
-  if (idx === -1)
-    return;
-  history[idx] = { ...history[idx], payload: plan.newPayload };
-}
-function buildTemplateExampleData2() {
-  return buildTemplateExampleData(getActivePreset());
-}
-function buildExampleTrackerBlock(format, identifier) {
-  const data = buildTemplateExampleData2();
-  return formatTrackerPayload2(data, format, identifier);
-}
-function formatTrackerPayload2(data, format, identifier) {
-  return formatTrackerPayload(data, format, identifier, config.trackerTagName);
-}
+var { checkConceptionTriggers, commitForcedConception } = createConceptionGate({
+  spindle,
+  readConfig: () => config,
+  hasPermission,
+  typeSafeCorsTransport,
+  trackEvent,
+  getChatTrackerHistory
+});
+var { registerMacros, pushMacroValues, buildExampleTrackerBlock, formatTrackerPayload: formatTrackerPayload2 } = createMacroPublisher({
+  spindle,
+  readConfig: () => config,
+  getActivePreset,
+  readFirstMessageFertilityHint: () => firstMessageFertilityHint,
+  publishSelectedTracker
+});
 async function loadConfig(userId) {
   config = await settingsStore.loadConfig(userId, (normalized) => {
     config = normalized;
@@ -15227,578 +16123,74 @@ async function saveConfig(userId, configToSave = config) {
 async function syncTypeSafeKeyToEnclave(userId, nextKey, previousKey) {
   await settingsStore.syncTypeSafeKeyToEnclave(userId, nextKey, previousKey);
 }
-spindle.on("MESSAGE_SENT", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    const ctx = readMessageContext(payload);
-    const message = ctx.content;
-    if (typeof message !== "string")
-      return;
-    if (ctx.chatId) {
-      activeChatId = ctx.chatId;
-      rehydrateChatTrackerHistory(ctx.chatId);
-    }
-    const commandResult = await handleSlashCommand(message, ctx);
-    if (commandResult) {
-      spindle.sendToFrontend(commandResult, activeUserId || undefined);
-      await trackEvent("sst.command.result", {
-        command: commandResult.payload.command,
-        ok: commandResult.payload.ok,
-        mode: commandResult.payload.mode || "fallback"
-      }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-    }
-    const sim = extractTrackerPayloadFromMessage(message);
-    if (sim) {
-      recordChatTracker(ctx.chatId, ctx.messageId, sim);
-      pushMacroValues();
-      await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-    }
-  })();
+registerMessageEvents({
+  spindle,
+  readConfig: () => config,
+  readActiveUserId: () => activeUserId,
+  setActiveChatId: (value) => {
+    activeChatId = value;
+  },
+  ensureConfigForUser,
+  rehydrateChatTrackerHistory,
+  handleSlashCommand,
+  extractTrackerPayloadFromMessage,
+  recordChatTracker,
+  forgetChatTracker,
+  pushMacroValues,
+  trackEvent
 });
-spindle.on("MESSAGE_EDITED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    const ctx = readMessageContext(payload);
-    if (ctx.chatId)
-      activeChatId = ctx.chatId;
-    if (typeof ctx.content !== "string")
-      return;
-    const sim = extractTrackerPayloadFromMessage(ctx.content);
-    if (sim) {
-      recordChatTracker(ctx.chatId, ctx.messageId, sim);
-      pushMacroValues();
-      await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier, source: "message_edited" }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
-      return;
-    }
-    forgetChatTracker(ctx.chatId, ctx.messageId);
-  })();
+registerMacros();
+var { enqueueSecondaryGeneration } = createSecondaryGeneration({
+  spindle,
+  readConfig: () => config,
+  readActiveUserId: () => activeUserId,
+  hasPermission,
+  trackEvent,
+  getActivePreset,
+  buildExampleTrackerBlock,
+  formatTrackerPayload: formatTrackerPayload2,
+  rehydrateChatTrackerHistory,
+  extractTrackerPayloadFromMessage,
+  getRecentChatTrackers,
+  recordChatTracker,
+  pushMacroValues,
+  typeSafeCorsTransport
 });
-spindle.on("MESSAGE_SWIPED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    if (!payload || typeof payload !== "object")
-      return;
-    const obj = payload;
-    const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
-    if (chatId)
-      activeChatId = chatId;
-    const message = obj.message && typeof obj.message === "object" ? obj.message : null;
-    if (!chatId || !message)
-      return;
-    const messageId = typeof message.id === "string" ? message.id : null;
-    if (!messageId)
-      return;
-    const action = typeof obj.action === "string" ? obj.action : "";
-    const activeSwipeId = typeof message.swipe_id === "number" ? message.swipe_id : 0;
-    const activeContent = typeof message.content === "string" ? message.content : Array.isArray(message.swipes) && typeof message.swipes[activeSwipeId] === "string" ? message.swipes[activeSwipeId] : "";
-    const payloadText = extractTrackerPayloadFromMessage(activeContent);
-    if (payloadText) {
-      recordChatTracker(chatId, messageId, payloadText);
-      pushMacroValues();
-    } else {
-      forgetChatTracker(chatId, messageId);
-    }
-    await trackEvent("sst.swipe.synced", { action, swipeId: typeof obj.swipeId === "number" ? obj.swipeId : null }, { chatId });
-  })();
+registerChatLifecycleEvents({
+  spindle,
+  readConfig: () => config,
+  ensureConfigForUser,
+  isSelectedChatKnown: () => selectedChatKnown,
+  selectChat,
+  setActiveChatId: (value) => {
+    activeChatId = value;
+  },
+  rehydrateChatTrackerHistory,
+  getChatTrackerHistory,
+  readFirstMessageFertilityHint: () => firstMessageFertilityHint,
+  writeFirstMessageFertilityHint: (value) => {
+    firstMessageFertilityHint = value;
+  },
+  pushMacroValues,
+  forgetChatTracker,
+  hasPermission,
+  extractTrackerPayloadFromMessage,
+  recordChatTracker,
+  enqueueSecondaryGeneration
 });
-spindle.on("MESSAGE_TAG_INTERCEPTED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    if (!payload || typeof payload !== "object")
-      return;
-    const obj = payload;
-    const tagName = typeof obj.tagName === "string" ? sanitizeTagName(obj.tagName) : "";
-    if (tagName !== sanitizeTagName(config.trackerTagName))
-      return;
-    const attrs = obj.attrs && typeof obj.attrs === "object" ? obj.attrs : {};
-    const tagType = sanitizeIdentifier(typeof attrs.type === "string" ? attrs.type : "");
-    if (tagType && tagType !== sanitizeIdentifier(config.codeBlockIdentifier))
-      return;
-    const content = typeof obj.content === "string" ? obj.content.trim() : "";
-    if (!content)
-      return;
-    const isStreaming = obj.isStreaming === true;
-    if (isStreaming)
-      return;
-    const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
-    const messageId = typeof obj.messageId === "string" ? obj.messageId : null;
-    if (chatId)
-      activeChatId = chatId;
-    recordChatTracker(chatId, messageId, content);
-    pushMacroValues();
-    await trackEvent("sst.tracker.detected", { identifier: config.codeBlockIdentifier, source: "message_tag_intercepted" });
-  })();
+var { tryRegisterInterceptor } = createPromptInterceptor({
+  spindle,
+  readConfig: () => config,
+  readActiveChatId: () => activeChatId,
+  hasPermission,
+  trackerMessageCodec,
+  rehydrateChatTrackerHistory,
+  getRecentChatTrackers,
+  getChatTrackerHistory,
+  extractTrackerPayloadFromMessage,
+  checkConceptionTriggers,
+  commitForcedConception
 });
-spindle.registerMacro({
-  name: "sim_format",
-  category: "extension:silly_sim_tracker",
-  description: "Example tracker tag format",
-  returnType: "string",
-  handler: ""
-});
-spindle.registerMacro({
-  name: "sim_tracker",
-  category: "extension:silly_sim_tracker",
-  description: "Main tracker instructions for the active template",
-  returnType: "string",
-  handler: ""
-});
-spindle.registerMacro({
-  name: "last_sim_stats",
-  category: "extension:silly_sim_tracker",
-  description: "The latest tracker state as a compact Markdown list",
-  returnType: "string",
-  handler: ""
-});
-function pushMacroValues() {
-  const fmt = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-  spindle.updateMacroValue("sim_format", fmt);
-  const tag = sanitizeTagName(config.trackerTagName);
-  const id = sanitizeIdentifier(config.codeBlockIdentifier);
-  const rawBase = getActivePreset().sysPrompt || "";
-  const base = sanitizeSysPromptForWireFormat(rawBase, tag, id);
-  const directive = [
-    "IMPORTANT OUTPUT FORMAT:",
-    "Do not emit markdown code fences for tracker data.",
-    "Emit a single XML block using this exact wrapper:",
-    `<${tag} type="${id}">`,
-    "{...tracker JSON or YAML...}",
-    `</${tag}>`,
-    "Narrative text must remain outside the tracker tag."
-  ].join(`
-`);
-  let simTracker = base ? directive + `
-
-` + base.replace(/\{\{sim_format\}\}/g, fmt) : directive + `
-
-` + fmt;
-  if (firstMessageFertilityHint) {
-    simTracker += `
-
-` + firstMessageFertilityHint;
-  }
-  spindle.updateMacroValue("sim_tracker", simTracker);
-  publishSelectedTracker();
-}
-var secondaryGenerationChain = Promise.resolve();
-var queuedSecondaryJobs = new Set;
-function enqueueSecondaryGeneration(chatId, messageId) {
-  const key = `${chatId}::${messageId}`;
-  if (queuedSecondaryJobs.has(key))
-    return secondaryGenerationChain;
-  queuedSecondaryJobs.add(key);
-  secondaryGenerationChain = secondaryGenerationChain.catch(() => {
-    return;
-  }).then(() => generateTrackerWithSecondaryLLM(chatId, messageId)).catch((err) => {
-    spindle.log.error(`Queued secondary LLM generation failed: ${err instanceof Error ? err.message : String(err)}`);
-  }).finally(() => {
-    queuedSecondaryJobs.delete(key);
-  });
-  return secondaryGenerationChain;
-}
-function describeMissingModelGuidance() {
-  return "The selected connection has no usable default model. Choose a model in SimTracker settings \u2192 Secondary LLM, or select a connection with a configured model.";
-}
-function describeRejectedModelGuidance(model) {
-  return `The provider rejected the configured model id \`${model}\`. Open SimTracker settings \u2192 Secondary LLM and confirm the override matches a model this connection can serve, or clear the override to fall back to the connection's default.`;
-}
-async function commitTrackerAppend(chatId, targetMessage, parsed, via) {
-  const trackerBlock = formatTrackerPayload2(parsed, config.trackerFormat, config.codeBlockIdentifier);
-  const updatedContent = `${targetMessage.content.trimEnd()}
-
-${trackerBlock}`;
-  await spindle.chat.updateMessage(chatId, targetMessage.id, { content: updatedContent });
-  const lastSimStats = config.trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
-  recordChatTracker(chatId, targetMessage.id, lastSimStats);
-  pushMacroValues();
-  spindle.log.info(`Tracker append complete via ${via}`);
-  spindle.sendToFrontend({
-    type: "secondary_generation_complete",
-    chatId,
-    messageId: targetMessage.id,
-    content: updatedContent,
-    via
-  }, activeUserId || undefined);
-}
-async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
-  if (!config.useSecondaryLLM)
-    return;
-  if (!hasPermission("generation")) {
-    spindle.log.warn("Secondary LLM generation requires 'generation' permission");
-    return;
-  }
-  if (!hasPermission("chat_mutation")) {
-    spindle.log.warn("Secondary LLM generation requires 'chat_mutation' permission");
-    return;
-  }
-  let trimmedModel = (config.secondaryLLMModel || "").trim();
-  spindle.sendToFrontend({ type: "secondary_generation_started", chatId, messageId: targetMessageId }, activeUserId || undefined);
-  try {
-    await rehydrateChatTrackerHistory(chatId);
-    const messages = await spindle.chat.getMessages(chatId);
-    if (!messages.length)
-      return;
-    const targetMessage = messages.find((m) => m.id === targetMessageId);
-    if (!targetMessage || targetMessage.role !== "assistant")
-      return;
-    if (extractTrackerPayloadFromMessage(targetMessage.content))
-      return;
-    const preset = getActivePreset();
-    const systemPrompt = preset.sysPrompt || "";
-    const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-    const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
-    const tagName = sanitizeTagName(config.trackerTagName);
-    const identifier = config.codeBlockIdentifier;
-    const messageCount = config.secondaryLLMMessageCount;
-    const recentMessages = messages.filter((m) => m.role !== "system").slice(-messageCount);
-    const historicalTrackers = collectSecondaryHistory({
-      retainTrackerCount: config.retainTrackerCount,
-      targetMessageId,
-      messages,
-      getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
-      extractTrackerPayloadFromMessage
-    });
-    if (config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
-      const previousPayload = historicalTrackers.length > 0 ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]) : null;
-      if (previousPayload) {
-        let fastLaneMessage = targetMessage.content.replace(buildTrackerTagRegex(tagName, "ig"), "").replace(buildTrackerFenceRegex(identifier, "gi"), "");
-        if (config.secondaryLLMStripHTML)
-          fastLaneMessage = stripStructuralHTML(fastLaneMessage);
-        const fields = (Array.isArray(preset.customFields) ? preset.customFields : []).map((field) => ({
-          key: typeof field?.key === "string" ? field.key : "",
-          description: typeof field?.description === "string" ? field.description : ""
-        })).filter((field) => field.key);
-        const plan = buildFastLanePlan({ message: fastLaneMessage.trim(), previousPayload, fields });
-        if (plan) {
-          let answers = null;
-          try {
-            answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: config.typeSafeApiKey.trim(), model: config.typeSafeModel }, plan.state, plan.questions);
-          } catch (err) {
-            const detail = err instanceof Error ? err.message : String(err);
-            spindle.log.warn(`TypeSafe fast lane unavailable, falling back to full secondary LLM: ${detail}`);
-            await trackEvent("sst.typesafe.error", { stage: "fast-lane", error: detail }, { level: "warn", chatId });
-          }
-          if (answers) {
-            const gate = interpretGate(answers, config.typeSafeConfidenceFloor);
-            if (gate === "skip") {
-              spindle.log.info("TypeSafe gate: no tracker changes warranted for this message");
-              await trackEvent("sst.typesafe.gate_skip", { messageId: targetMessageId }, { chatId });
-              spindle.sendToFrontend({ type: "secondary_generation_skipped", chatId, messageId: targetMessageId }, activeUserId || undefined);
-              return;
-            }
-            if (gate === "fast") {
-              const result2 = applyFastLaneAnswers(previousPayload, plan.directives, answers, config.typeSafeConfidenceFloor);
-              if (result2.changed.length > 0) {
-                await commitTrackerAppend(chatId, targetMessage, result2.payload, "typesafe-fast-lane");
-                await trackEvent("sst.typesafe.fast_append", { changed: result2.changed }, { chatId });
-                return;
-              }
-              await trackEvent("sst.typesafe.fast_append_fallback", { reason: "no-confident-changes" }, { chatId });
-            }
-          }
-        }
-      }
-    }
-    if (!hasPermission("generation_parameters")) {
-      const guidance = "Secondary LLM generation requires the 'generation_parameters' permission so the configured model id reaches the provider. Grant it in SimTracker's permission prompt and try again.";
-      spindle.log.warn(guidance);
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, activeUserId || undefined);
-      return;
-    }
-    const connections = await spindle.connections.list(activeUserId || undefined);
-    const route = resolveSecondaryConnection(connections, config.secondaryLLMConnectionId, trimmedModel);
-    trimmedModel = route.model;
-    if (!route.ok) {
-      const guidance = route.reason === "provider" ? "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again." : describeMissingModelGuidance();
-      spindle.log.warn(guidance);
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, activeUserId || undefined);
-      return;
-    }
-    const { connection, provider } = route;
-    const { cleanedMessages, conversationText } = buildSecondaryPrompt({
-      processedPrompt,
-      historicalTrackers,
-      recentMessages,
-      tagName,
-      identifier,
-      stripHTML: config.secondaryLLMStripHTML,
-      trackerFormat: config.trackerFormat
-    });
-    const llmMessages = [
-      { role: "user", content: conversationText }
-    ];
-    const parameters = {
-      model: trimmedModel,
-      temperature: config.secondaryLLMTemperature
-    };
-    spindle.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
-    const generationRequest = {
-      type: "raw",
-      messages: llmMessages,
-      parameters,
-      connection_id: connection.id,
-      userId: activeUserId || undefined,
-      provider,
-      model: trimmedModel
-    };
-    const result = await spindle.generate.raw(generationRequest);
-    const resultObj = result;
-    const generatedText = typeof resultObj.content === "string" ? resultObj.content : "";
-    if (!generatedText) {
-      spindle.log.warn("Secondary LLM returned empty response");
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId }, activeUserId || undefined);
-      return;
-    }
-    let parsed = parseGeneratedTrackerPayload(generatedText);
-    if (!parsed) {
-      spindle.log.warn("Secondary LLM response was invalid; attempting one syntax repair");
-      const repairResult = await spindle.generate.raw({
-        ...generationRequest,
-        messages: [
-          {
-            role: "system",
-            content: `Repair the supplied tracker as ${config.trackerFormat.toUpperCase()} syntax. Preserve all existing fields and values. Do not add explanations, code fences, or XML tags. Return only the complete corrected document.`
-          },
-          { role: "user", content: generatedText }
-        ]
-      });
-      const repairResultObj = repairResult;
-      const repairedText = typeof repairResultObj.content === "string" ? repairResultObj.content : "";
-      parsed = parseGeneratedTrackerPayload(repairedText);
-    }
-    if (!parsed) {
-      spindle.log.warn("Secondary LLM response and repair could not be parsed as valid tracker data");
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId }, activeUserId || undefined);
-      return;
-    }
-    if (config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
-      const previousPayload = parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]);
-      const narrative = cleanedMessages.map((msg) => `${msg.role === "user" ? "User" : "Character"}: ${msg.content}`).join(`
-
-`);
-      const verifyPlan = previousPayload ? buildVerifyPlan({ narrative, previousPayload, generatedPayload: parsed }) : null;
-      if (verifyPlan) {
-        try {
-          const verdict = interpretVerifyAnswers(await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: config.typeSafeApiKey.trim(), model: config.typeSafeModel }, verifyPlan.state, verifyPlan.questions));
-          if (!verdict.ok) {
-            const message = `TypeSafe verification rejected the generated tracker: ${verdict.reasons.join("; ")}`;
-            spindle.log.warn(message);
-            spindle.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, activeUserId || undefined);
-            await trackEvent("sst.typesafe.verify_reject", { reasons: verdict.reasons }, { level: "warn", chatId });
-            return;
-          }
-          await trackEvent("sst.typesafe.verify_pass", {}, { chatId });
-        } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          spindle.log.warn(`TypeSafe verification unavailable, appending anyway: ${detail}`);
-          await trackEvent("sst.typesafe.error", { stage: "verify", error: detail }, { level: "warn", chatId });
-        }
-      }
-    }
-    await commitTrackerAppend(chatId, targetMessage, parsed, "secondary-llm");
-    await trackEvent("sst.secondary_generation.complete", {
-      connectionId: config.secondaryLLMConnectionId,
-      model: config.secondaryLLMModel
-    }, { chatId });
-  } catch (err) {
-    const rawMessage = err instanceof Error ? err.message : String(err);
-    const looksLikeModelError = /\bmodel\b/i.test(rawMessage) && /(missing|invalid|empty|required|not.*found)/i.test(rawMessage);
-    const message = looksLikeModelError ? `${rawMessage}
-
-${describeRejectedModelGuidance(trimmedModel)}` : rawMessage;
-    spindle.log.error(`Secondary LLM generation failed: ${rawMessage}`);
-    spindle.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, activeUserId || undefined);
-    await trackEvent("sst.secondary_generation.failed", { error: rawMessage }, { level: "error" });
-  }
-}
-spindle.on("GENERATION_STARTED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    if (!payload || typeof payload !== "object")
-      return;
-    const obj = payload;
-    const chatId = typeof obj.chatId === "string" ? obj.chatId : null;
-    if (!chatId)
-      return;
-    if (!selectedChatKnown)
-      selectChat(chatId);
-    activeChatId = chatId;
-    await rehydrateChatTrackerHistory(chatId);
-    const previousHint = firstMessageFertilityHint;
-    firstMessageFertilityHint = "";
-    try {
-      const isNewChat = getChatTrackerHistory(chatId).length === 0 && await (async () => {
-        const msgs = await spindle.chat.getMessages(chatId);
-        return msgs.filter((m) => m.role === "user").length === 1;
-      })();
-      if (isNewChat) {
-        firstMessageFertilityHint = buildFirstMessageHint(config.fertilityCycleBias);
-      }
-    } catch {}
-    if (previousHint !== firstMessageFertilityHint)
-      pushMacroValues();
-  })();
-});
-spindle.on("CHAT_SWITCHED", (payload, userId) => {
-  const obj = payload && typeof payload === "object" ? payload : {};
-  const chatId = typeof obj.chatId === "string" ? obj.chatId : typeof obj.chat_id === "string" ? obj.chat_id : null;
-  selectChat(chatId);
-  (async () => {
-    await ensureConfigForUser(userId);
-    if (chatId)
-      activeChatId = chatId;
-    if (chatId) {
-      await rehydrateChatTrackerHistory(chatId);
-    }
-  })();
-});
-spindle.on("MESSAGE_DELETED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    const ctx = readMessageContext(payload);
-    if (!ctx.chatId || !ctx.messageId)
-      return;
-    forgetChatTracker(ctx.chatId, ctx.messageId);
-    spindle.log.info(`Forgot tracker side-channel entry for deleted message ${ctx.messageId} in chat ${ctx.chatId}`);
-  })();
-});
-spindle.on("GENERATION_ENDED", (payload, userId) => {
-  (async () => {
-    await ensureConfigForUser(userId);
-    const ctx = readMessageContext(payload);
-    if (ctx.chatId) {
-      activeChatId = ctx.chatId;
-      rehydrateChatTrackerHistory(ctx.chatId);
-    }
-    if (!config.useSecondaryLLM)
-      return;
-    if (!hasPermission("generation") || !hasPermission("chat_mutation"))
-      return;
-    if (!ctx.chatId)
-      return;
-    let chatMessages;
-    try {
-      chatMessages = await spindle.chat.getMessages(ctx.chatId);
-    } catch {
-      return;
-    }
-    const latestAssistant = chatMessages.findLast((m) => m.role === "assistant");
-    if (!latestAssistant)
-      return;
-    const existingPayload = extractTrackerPayloadFromMessage(latestAssistant.content);
-    if (existingPayload) {
-      recordChatTracker(ctx.chatId, latestAssistant.id, existingPayload);
-      return;
-    }
-    enqueueSecondaryGeneration(ctx.chatId, latestAssistant.id);
-  })();
-});
-var { stripOldTrackerBlocksGlobal, formatTrackerBlocksInMessages, countTrackersInMessages, buildTrackerInjectionBlock, withTrailingDirective } = createTrackerPromptRetention(() => config, trackerMessageCodec);
-function resolveInterceptorChatId(context) {
-  if (context && typeof context === "object") {
-    const obj = context;
-    const candidates = [
-      obj.chatId,
-      obj.chat_id,
-      obj.chat?.id,
-      obj.generation?.chatId
-    ];
-    for (const c of candidates) {
-      if (typeof c === "string" && c.trim().length > 0)
-        return c;
-    }
-  }
-  return activeChatId;
-}
-var interceptorRegistered = false;
-function tryRegisterInterceptor() {
-  if (interceptorRegistered)
-    return;
-  if (!hasPermission("interceptor"))
-    return;
-  try {
-    spindle.registerInterceptor(async (messages, context) => {
-      const keepNewest = config.retainTrackerCount;
-      if (keepNewest < 0)
-        return messages;
-      if (!Array.isArray(messages) || messages.length === 0)
-        return messages;
-      const retained = stripOldTrackerBlocksGlobal(messages, config.codeBlockIdentifier, keepNewest);
-      if (keepNewest === 0)
-        return retained;
-      const chatId = resolveInterceptorChatId(context);
-      let conceptionDirective = "";
-      if (chatId) {
-        await rehydrateChatTrackerHistory(chatId);
-        const preMutationLatest = getRecentChatTrackers(chatId, 1);
-        const latestPayload = preMutationLatest.length > 0 ? parseTrackerPayload(preMutationLatest[preMutationLatest.length - 1].payload) : null;
-        if (latestPayload) {
-          const conceptionNames = await checkConceptionTriggers(chatId, latestPayload, latestNarrativeBeat(retained));
-          if (conceptionNames.length > 0) {
-            const plan = planForcedConception(getChatTrackerHistory(chatId), conceptionNames, extractCurrentDate(latestPayload));
-            if (plan) {
-              commitForcedConception(chatId, plan);
-              rewriteTrackerInMessages(retained, plan.oldPayload, plan.newPayload, extractTrackerPayloadFromMessage);
-            }
-            conceptionDirective = buildConceptionDirective(conceptionNames);
-          }
-        }
-      }
-      const currentCount = countTrackersInMessages(retained, keepNewest);
-      if (currentCount >= keepNewest) {
-        return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
-      }
-      if (!chatId)
-        return formatTrackerBlocksInMessages(retained);
-      const needed = keepNewest - currentCount;
-      const history = getRecentChatTrackers(chatId, keepNewest);
-      if (history.length === 0) {
-        return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
-      }
-      const existingPayloads = new Set;
-      for (const msg of retained) {
-        if (!msg || typeof msg.content !== "string")
-          continue;
-        const payload = extractTrackerPayloadFromMessage(msg.content);
-        if (payload)
-          existingPayloads.add(payload.trim());
-      }
-      const toInject = history.slice().reverse().filter((entry) => !existingPayloads.has(entry.payload.trim())).slice(0, needed).reverse();
-      if (toInject.length === 0)
-        return withTrailingDirective(formatTrackerBlocksInMessages(retained), conceptionDirective);
-      const block = buildTrackerInjectionBlock(toInject);
-      const promptMessages = formatTrackerBlocksInMessages(retained);
-      let lastAssistantIdx = -1;
-      for (let i = promptMessages.length - 1;i >= 0; i -= 1) {
-        const m = promptMessages[i];
-        if (m && m.role === "assistant" && typeof m.content === "string") {
-          lastAssistantIdx = i;
-          break;
-        }
-      }
-      if (lastAssistantIdx >= 0) {
-        const injected2 = promptMessages.slice();
-        const target = injected2[lastAssistantIdx];
-        const base = typeof target.content === "string" ? target.content.trimEnd() : "";
-        injected2[lastAssistantIdx] = {
-          ...target,
-          content: base ? `${base}
-
-${block}` : block
-        };
-        return withTrailingDirective(injected2, conceptionDirective);
-      }
-      const injected = promptMessages.slice();
-      const insertAt = Math.max(0, injected.length - 1);
-      injected.splice(insertAt, 0, { role: "system", content: block });
-      return withTrailingDirective(injected, conceptionDirective);
-    }, 90);
-    interceptorRegistered = true;
-    spindle.log.info("Interceptor registered");
-  } catch {
-    spindle.log.warn("Interceptor registration failed");
-  }
-}
 tryRegisterInterceptor();
 async function initGrantedPermissions() {
   try {
@@ -15871,201 +16263,37 @@ function sendTagInterceptorConfig(userId, configToSend = config) {
     removeFromMessage: configToSend.hideSimBlocks
   }, userId);
 }
-spindle.onFrontendMessage(async (payload, userId) => {
-  if (!payload || typeof payload !== "object")
-    return;
-  activeUserId = userId;
-  const message = payload;
-  if (message.type === "get_config") {
-    try {
-      await loadConfig(userId);
-      sendTagInterceptorConfig(userId);
-      await sendConfigState(userId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      spindle.log.error(`get_config handler failed: ${msg}`);
-      sendConfigError(userId, msg, "load");
-    }
-    return;
-  }
-  if (message.type === "set_config") {
-    try {
-      await ensureConfigForUser(userId);
-      const incoming = message.config;
-      const previousTypeSafeKey = config.typeSafeApiKey.trim();
-      config = mergeTrackerConfig(config, incoming);
-      await syncTypeSafeKeyToEnclave(userId, config.typeSafeApiKey, previousTypeSafeKey);
-      await saveConfig(userId);
-      pushMacroValues();
-      await trackEvent("sst.config.updated", {
-        trackerTagName: config.trackerTagName,
-        templateId: config.templateId,
-        trackerFormat: config.trackerFormat,
-        retainTrackerCount: config.retainTrackerCount,
-        hideSimBlocks: config.hideSimBlocks,
-        useSecondaryLLM: config.useSecondaryLLM
-      });
-      await sendConfigState(userId);
-      spindle.sendToFrontend({ type: "config_saved" }, userId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      spindle.log.error(`set_config handler failed for user ${userId}: ${msg}`);
-      sendConfigError(userId, msg, "save");
-    }
-    return;
-  }
-  if (message.type === "get_connections") {
-    if (!hasPermission("generation")) {
-      spindle.log.warn("get_connections: 'generation' permission not granted");
-      spindle.sendToFrontend({
-        type: "connections_list",
-        connections: [],
-        error: "Generation permission not granted"
-      }, userId);
-      return;
-    }
-    try {
-      spindle.log.info(`get_connections: requesting with userId=${userId || "(none)"}`);
-      const connections = await spindle.connections.list(userId || undefined);
-      spindle.log.info(`get_connections: received ${connections?.length ?? 0} connection(s)`);
-      spindle.sendToFrontend({ type: "connections_list", connections: connections ?? [] }, userId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      spindle.log.error(`get_connections failed: ${msg}`);
-      spindle.sendToFrontend({ type: "connections_list", connections: [], error: msg }, userId);
-    }
-    return;
-  }
-  if (message.type === "trigger_secondary_generation") {
-    const chatId = typeof message.chatId === "string" ? message.chatId : null;
-    const messageId = typeof message.messageId === "string" ? message.messageId : null;
-    if (chatId && messageId) {
-      enqueueSecondaryGeneration(chatId, messageId);
-    }
-    return;
-  }
-  if (message.type === "regenerate_secondary_tracker") {
-    const chatId = typeof message.chatId === "string" ? message.chatId : null;
-    const hintedMessageId = typeof message.messageId === "string" ? message.messageId : null;
-    if (!chatId)
-      return;
-    if (!hasPermission("chat_mutation")) {
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: "Regenerate requires 'chat_mutation' permission" }, userId);
-      return;
-    }
-    const messages = await spindle.chat.getMessages(chatId);
-    let target = hintedMessageId ? messages.find((m) => m.id === hintedMessageId && m.role === "assistant") || null : null;
-    if (!target) {
-      for (let i = messages.length - 1;i >= 0; i -= 1) {
-        if (messages[i].role === "assistant") {
-          target = messages[i];
-          break;
-        }
-      }
-    }
-    if (!target) {
-      spindle.sendToFrontend({ type: "secondary_generation_error", message: "No assistant message was found in this chat to regenerate." }, userId);
-      return;
-    }
-    const tagRe = buildTrackerTagRegex(sanitizeTagName(config.trackerTagName), "gi");
-    const fenceRe = buildTrackerFenceRegex(config.codeBlockIdentifier, "gi");
-    const hadTracker = extractTrackerPayloadFromMessage(target.content) !== null;
-    if (hadTracker) {
-      const stripped = target.content.replace(tagRe, "").replace(fenceRe, "").replace(/\n{3,}/g, `
-
-`).trimEnd();
-      spindle.log.info(`Regenerate: stripping existing tracker from message ${target.id} in chat ${chatId}`);
-      await spindle.chat.updateMessage(chatId, target.id, { content: stripped });
-      forgetChatTracker(chatId, target.id);
-    } else {
-      spindle.log.info(`Regenerate: message ${target.id} in chat ${chatId} has no tracker yet \u2014 generating fresh`);
-    }
-    enqueueSecondaryGeneration(chatId, target.id);
-    return;
-  }
-  if (message.type === "get_latest_tracker") {
-    const chatId = typeof message.chatId === "string" ? message.chatId : null;
-    if (!chatId) {
-      if (!selectedChatKnown)
-        selectChat(null);
-      spindle.sendToFrontend({ type: "tracker_history_latest", chatId: null, entry: null }, userId);
-      return;
-    }
-    if (!selectedChatKnown)
-      selectChat(chatId);
-    if (selectedChatId === chatId)
-      activeChatId = chatId;
-    await rehydrateChatTrackerHistory(chatId);
-    const history = getChatTrackerHistory(chatId);
-    const entry = history.length > 0 ? history[history.length - 1] : null;
-    const previousEntry = history.length > 1 ? history[history.length - 2] : null;
-    spindle.sendToFrontend({
-      type: "tracker_history_latest",
-      chatId,
-      entry: entry ? {
-        messageId: entry.messageId,
-        payload: entry.payload,
-        previousPayload: previousEntry?.payload || null
-      } : null
-    }, userId);
-    return;
-  }
-  if (message.type === "remove_inline_pack") {
-    const index = typeof message.index === "number" ? message.index : -1;
-    if (index >= 0 && index < config.inlinePacks.length) {
-      const next = config.inlinePacks.slice();
-      next.splice(index, 1);
-      config = { ...config, inlinePacks: next };
-      await saveConfig(userId);
-      pushMacroValues();
-      await sendConfigState(userId);
-    }
-    return;
-  }
-  if (message.type === "toggle_inline_pack") {
-    const index = typeof message.index === "number" ? message.index : -1;
-    const enabled = typeof message.enabled === "boolean" ? message.enabled : true;
-    if (index >= 0 && index < config.inlinePacks.length) {
-      const next = config.inlinePacks.slice();
-      next[index] = { ...next[index], enabled };
-      config = { ...config, inlinePacks: next };
-      await saveConfig(userId);
-      pushMacroValues();
-      await sendConfigState(userId);
-    }
-    return;
-  }
-  if (message.type === "delete_preset") {
-    await ensureConfigForUser(userId);
-    const templateId = typeof message.templateId === "string" ? message.templateId : "";
-    const preset = config.userPresets.find((item) => item.id === templateId);
-    if (!preset) {
-      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: "Only imported templates can be deleted." }, userId);
-      return;
-    }
-    const previousConfig = config;
-    config = {
-      ...config,
-      userPresets: config.userPresets.filter((item) => item.id !== templateId),
-      templateId: config.templateId === templateId ? DEFAULT_CONFIG.templateId : config.templateId
-    };
-    try {
-      await saveConfig(userId);
-    } catch (err) {
-      config = previousConfig;
-      const detail = err instanceof Error ? err.message : String(err);
-      spindle.log.error(`delete_preset failed: ${detail}`);
-      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: `Could not delete template: ${detail}` }, userId);
-      return;
-    }
-    pushMacroValues();
-    await sendConfigState(userId);
-    spindle.sendToFrontend({ type: "delete_preset_result", ok: true, message: `Deleted template: ${preset.templateName}` }, userId);
-    return;
-  }
-  if (message.type === "import_preset_file") {
-    await handleImportPresetFile(message, userId);
-  }
-});
+spindle.onFrontendMessage(createFrontendMessageHandler({
+  spindle,
+  readConfig: () => config,
+  writeConfig: (value) => {
+    config = value;
+  },
+  setActiveUserId: (value) => {
+    activeUserId = value;
+  },
+  setActiveChatId: (value) => {
+    activeChatId = value;
+  },
+  isSelectedChatKnown: () => selectedChatKnown,
+  readSelectedChatId: () => selectedChatId,
+  selectChat,
+  loadConfig,
+  ensureConfigForUser,
+  syncTypeSafeKeyToEnclave,
+  saveConfig,
+  pushMacroValues,
+  trackEvent,
+  sendConfigState,
+  sendTagInterceptorConfig,
+  sendConfigError,
+  hasPermission,
+  enqueueSecondaryGeneration,
+  extractTrackerPayloadFromMessage,
+  forgetChatTracker,
+  rehydrateChatTrackerHistory,
+  getChatTrackerHistory,
+  handleImportPresetFile
+}));
 await initGrantedPermissions();
 spindle.log.info("Silly Sim Tracker (Lumiverse) backend started");
