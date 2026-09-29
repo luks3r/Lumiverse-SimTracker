@@ -141,6 +141,12 @@ Settings live in the Lumiverse extension panel:
 
 Additional presets are seeded into Lumiverse storage on first install and appear in the template dropdown alongside built-ins.
 
+### Character context in secondary-generation presets
+
+The secondary LLM resolves Lumiverse macros in a preset's `sysPrompt` using the current chat. For example, `{{char}}`, `{{description}}` (or `{{charDescription}}`), `{{personality}}` (or `{{charPersonality}}`), and `{{scenario}}` can be used directly. Direct macros are expanded on every secondary call.
+
+Use `{{sim_character_context}}` to avoid resending the full card. It expands to the character's name, description, personality, and scenario only when the secondary prompt has no retained tracker baseline; otherwise it expands to nothing. Keep **Retain tracker tags in prompt** at 1 or more to let the previous tracker serve as that baseline. At 0, context is included again because the secondary LLM has no prior tracker in its prompt. The extension also instructs the secondary LLM to preserve stable traits from the previous tracker unless new narrative evidence contradicts them. Card edits do not yet trigger automatic re-injection when a baseline exists.
+
 ## Preset import / export
 
 The settings panel exposes:

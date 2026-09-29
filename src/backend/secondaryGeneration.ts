@@ -5,6 +5,7 @@ import type { BackendToFrontendMessage } from "../shared/wireMessages";
 import { stringify as stringifyYaml } from "yaml";
 import { parseGeneratedTrackerPayload, parseTrackerPayload } from "./trackerPayload";
 import { buildSecondaryPrompt } from "./secondaryPrompt";
+import { resolveSecondaryPresetPrompt } from "./secondaryPresetPrompt";
 import { collectSecondaryHistory } from "./secondaryHistory";
 import { resolveSecondaryConnection } from "./secondaryConnection";
 import { stripStructuralHTML } from "./secondaryPromptText";
@@ -175,10 +176,6 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     if (!targetMessage || targetMessage.role !== "assistant") return;
     if (extractTrackerPayloadFromMessage(targetMessage.content)) return;
 
-    const systemPrompt = preset.sysPrompt || "";
-    const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-    const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
-
     const tagName = sanitizeTagName(config.trackerTagName);
     const identifier = config.codeBlockIdentifier;
     const messageCount = config.secondaryLLMMessageCount;
@@ -299,6 +296,14 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       return;
     }
     const { connection, provider } = route;
+
+    const processedPrompt = await resolveSecondaryPresetPrompt({
+      spindle,
+      chatId,
+      sysPrompt: preset.sysPrompt || "",
+      formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
+      hasTrackerBaseline: historicalTrackers.length > 0,
+    });
 
     const { cleanedMessages, conversationText } = buildSecondaryPrompt({
       processedPrompt,

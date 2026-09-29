@@ -24,6 +24,7 @@ const requests: GenerationRequest[] = [];
 const outputs: string[] = [];
 const updates: Array<{ chatId: string; messageId: string; content: string }> = [];
 const notifications: Array<Record<string, unknown>> = [];
+const macroResolutions: Array<{ template: string; options: Record<string, unknown> }> = [];
 let terminalNotification: ((message: Record<string, unknown>) => void) | null = null;
 let connectionModel = "gpt-test";
 let connectionProvider = "openai";
@@ -32,6 +33,7 @@ let selectedModelOverride = "";
 let trackerFormat: "json" | "yaml" = "json";
 let jsonResponseFormat = false;
 let retainTrackerCount = 0;
+let presetPrompt: string | null = null;
 let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | null = null;
 let generationGate: Promise<void> | null = null;
 
@@ -42,6 +44,21 @@ const spindle = {
   onFrontendMessage: (handler: typeof frontendHandler) => { frontendHandler = handler; },
   registerMacro: () => {},
   updateMacroValue: () => {},
+  macros: {
+    resolve: async (template: string, options: Record<string, unknown>) => {
+      macroResolutions.push({ template, options });
+      const values: Record<string, string> = {
+        char: "Ayla",
+        user: "Reader",
+        description: "Tall elf",
+        charDescription: "Tall elf",
+        personality: "Patient",
+        charPersonality: "Patient",
+        scenario: "Forest camp",
+      };
+      return { text: template.replace(/\{\{(char|user|description|charDescription|personality|charPersonality|scenario)\}\}/g, (_match, key: string) => values[key]), diagnostics: [] };
+    },
+  },
   sendToFrontend: (message: Record<string, unknown>) => {
     notifications.push(message);
     if (message.type === "secondary_generation_complete" || message.type === "secondary_generation_error") {
@@ -61,6 +78,10 @@ const spindle = {
       retainTrackerCount,
       trackerFormat,
       secondaryLLMJsonResponseFormat: jsonResponseFormat,
+      ...(presetPrompt === null ? {} : {
+        templateId: "context-test-preset",
+        userPresets: [{ id: "context-test-preset", templateName: "Context test", sysPrompt: presetPrompt }],
+      }),
       typeSafeEnabled: false,
     }),
   },
@@ -99,7 +120,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number; sysPrompt?: string } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -112,6 +133,7 @@ async function runGeneration(
   trackerFormat = options.trackerFormat ?? "json";
   jsonResponseFormat = options.jsonResponseFormat ?? false;
   retainTrackerCount = options.retainTrackerCount ?? 0;
+  presetPrompt = options.sysPrompt ?? null;
   const message: Message = {
     id: messageId,
     role: "assistant",
@@ -131,6 +153,7 @@ async function runGeneration(
   requests.length = 0;
   updates.length = 0;
   notifications.length = 0;
+  macroResolutions.length = 0;
 
   const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Secondary generation did not finish")), 2_000);
@@ -164,6 +187,7 @@ describe("secondary generation flow", () => {
     trackerFormat = "json";
     jsonResponseFormat = false;
     retainTrackerCount = 0;
+    presetPrompt = null;
     await send({ type: "get_config" }, userId);
 
     let releaseGeneration!: () => void;
@@ -327,6 +351,75 @@ describe("secondary generation flow", () => {
     expect(prompt).toContain("turn: 1");
     expect(prompt).toContain("Narrative beat");
     expect(prompt.split("Recent conversation:\n\n")[1]).not.toContain('<tracker type="sim">');
+  });
+
+  test("initial secondary tracker resolves conditional character-card context", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "Track {{char}} for {{user}}.\n{{sim_character_context}}\n{{sim_format}}",
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Track Ayla for Reader.");
+    expect(prompt).toContain("Name: Ayla");
+    expect(prompt).toContain("Description: Tall elf");
+    expect(prompt).toContain("Personality: Patient");
+    expect(prompt).toContain("Scenario: Forest camp");
+    expect(prompt).not.toContain("{{sim_character_context}}");
+    expect(macroResolutions[0].options).toMatchObject({ chatId: expect.any(String), commit: false });
+  });
+
+  test("retained tracker replaces repeated card context as the baseline", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "Track {{char}}.\n{{sim_character_context}}",
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla","ap":70}]}',
+      retainTrackerCount: 1,
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Track Ayla.");
+    expect(prompt).toContain("Previous tracker state:");
+    expect(prompt).toContain("ap: 70");
+    expect(prompt).not.toContain("Description: Tall elf");
+    expect(prompt).not.toContain("Personality: Patient");
+    expect(prompt).not.toContain("Scenario: Forest camp");
+    expect(prompt).toContain("Stable baseline traits already present in the previous tracker are authoritative.");
+  });
+
+  test("without a retained baseline the character context is included again", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "{{sim_character_context}}",
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla","ap":70}]}',
+      retainTrackerCount: 0,
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    const prompt = requests[0].messages[0].content;
+    expect(prompt).toContain("Description: Tall elf");
+    expect(prompt).not.toContain("Previous tracker state:");
+  });
+
+  test("explicit character macros in the preset remain opt-in every turn", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "Always read {{description}}.",
+      priorTracker: '{"worldData":{},"characters":[{"name":"Ayla"}]}',
+      retainTrackerCount: 1,
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].messages[0].content).toContain("Always read Tall elf.");
+  });
+
+  test("character description and personality aliases resolve in secondary presets", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "Card: {{charDescription}}; {{charPersonality}}.",
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].messages[0].content).toContain("Card: Tall elf; Patient.");
+    expect(macroResolutions[0].template).toContain("{{description}}");
+    expect(macroResolutions[0].template).toContain("{{personality}}");
   });
 
   test("provider prompt orders multiple retained states oldest to newest", async () => {

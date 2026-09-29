@@ -13660,6 +13660,24 @@ Based on the above conversation${hasHistory ? " and the previous tracker state(s
   return { cleanedMessages, conversationText };
 }
 
+// src/backend/secondaryPresetPrompt.ts
+var CHARACTER_CONTEXT = [
+  "Character-card context (initialization only):",
+  "Name: {{char}}",
+  "Description: {{description}}",
+  "Personality: {{personality}}",
+  "Scenario: {{scenario}}"
+].join(`
+`);
+var BASELINE_POLICY = "Stable baseline traits already present in the previous tracker are authoritative. Do not re-infer or re-randomize them unless new narrative evidence contradicts them. When character-card context is provided, use it only to initialize missing stable traits, not as current scene state.";
+async function resolveSecondaryPresetPrompt(options) {
+  const template = options.sysPrompt.replace(/\{\{sim_character_context\}\}/g, options.hasTrackerBaseline ? "" : CHARACTER_CONTEXT).replace(/\{\{sim_format\}\}/g, options.formatExample).replace(/\{\{charDescription\}\}/g, "{{description}}").replace(/\{\{charPersonality\}\}/g, "{{personality}}").replace(/\{\{charScenario\}\}/g, "{{scenario}}");
+  const { text } = await options.spindle.macros.resolve(template, { chatId: options.chatId, commit: false });
+  return `${text}
+
+${BASELINE_POLICY}`;
+}
+
 // src/backend/secondaryHistory.ts
 function collectSecondaryHistory(options) {
   const retainSetting = Number.isFinite(options.retainTrackerCount) ? options.retainTrackerCount : 3;
@@ -14172,9 +14190,6 @@ ${trackerBlock}`;
         return;
       if (extractTrackerPayloadFromMessage(targetMessage.content))
         return;
-      const systemPrompt = preset.sysPrompt || "";
-      const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
-      const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
       const tagName = sanitizeTagName(config.trackerTagName);
       const identifier = config.codeBlockIdentifier;
       const messageCount = config.secondaryLLMMessageCount;
@@ -14243,6 +14258,13 @@ ${trackerBlock}`;
         return;
       }
       const { connection, provider } = route;
+      const processedPrompt = await resolveSecondaryPresetPrompt({
+        spindle: spindle2,
+        chatId,
+        sysPrompt: preset.sysPrompt || "",
+        formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
+        hasTrackerBaseline: historicalTrackers.length > 0
+      });
       const { cleanedMessages, conversationText } = buildSecondaryPrompt({
         processedPrompt,
         historicalTrackers,
