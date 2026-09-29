@@ -15,10 +15,10 @@ export async function resolveSecondaryPresetPrompt(options: {
   chatId: string;
   sysPrompt: string;
   formatExample: string;
-  hasTrackerBaseline: boolean;
+  hasKnownPriorTracker: boolean;
 }): Promise<string> {
   const template = options.sysPrompt
-    .replace(/\{\{sim_character_context\}\}/g, options.hasTrackerBaseline ? "" : CHARACTER_CONTEXT)
+    .replace(/\{\{sim_character_context\}\}/g, options.hasKnownPriorTracker ? "" : CHARACTER_CONTEXT)
     .replace(/\{\{sim_format\}\}/g, options.formatExample)
     .replace(/\{\{charDescription\}\}/g, "{{description}}")
     .replace(/\{\{charPersonality\}\}/g, "{{personality}}")

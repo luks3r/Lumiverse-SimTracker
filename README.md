@@ -145,7 +145,7 @@ Additional presets are seeded into Lumiverse storage on first install and appear
 
 The secondary LLM resolves Lumiverse macros in a preset's `sysPrompt` using the current chat. For example, `{{char}}`, `{{description}}` (or `{{charDescription}}`), `{{personality}}` (or `{{charPersonality}}`), and `{{scenario}}` can be used directly. Direct macros are expanded on every secondary call.
 
-Use `{{sim_character_context}}` to avoid resending the full card. It expands to the character's name, description, personality, and scenario only when the secondary prompt has no retained tracker baseline; otherwise it expands to nothing. Keep **Retain tracker tags in prompt** at 1 or more to let the previous tracker serve as that baseline. At 0, context is included again because the secondary LLM has no prior tracker in its prompt. The extension also instructs the secondary LLM to preserve stable traits from the previous tracker unless new narrative evidence contradicts them. Card edits do not yet trigger automatic re-injection when a baseline exists.
+Use `{{sim_character_context}}` to avoid resending the full card. It expands to the character's name, description, personality, and scenario only when the chat has no known prior tracker; otherwise it expands to nothing. **Retain tracker tags in prompt** independently controls how many previous trackers the secondary LLM sees. At 0, later calls receive neither the card context nor a previous tracker, so they cannot rely on that tracker to preserve stable values. The extension instructs the secondary LLM to preserve stable traits from a previous tracker when one is provided. Card edits do not yet trigger automatic re-injection when a prior tracker exists.
 
 ## Preset import / export
 

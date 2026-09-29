@@ -35,6 +35,7 @@ export function createSecondaryGeneration(deps: {
   buildExampleTrackerBlock: (format: "json" | "yaml", identifier: string) => string;
   formatTrackerPayload: (data: Record<string, unknown>, format: "json" | "yaml", identifier: string) => string;
   rehydrateChatTrackerHistory: (chatId: string | null) => Promise<void>;
+  getChatTrackerHistory: (chatId: string | null) => Array<{ messageId: string; payload: string }>;
   extractTrackerPayloadFromMessage: (content: string) => string | null;
   getRecentChatTrackers: (chatId: string, limit: number, excludeMessageId: string) => Array<{ payload: string }>;
   recordChatTracker: (chatId: string | null, messageId: string | null, payload: string) => void;
@@ -302,7 +303,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       chatId,
       sysPrompt: preset.sysPrompt || "",
       formatExample: buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier),
-      hasTrackerBaseline: historicalTrackers.length > 0,
+      hasKnownPriorTracker: deps.getChatTrackerHistory(chatId).some((entry) => entry.messageId !== targetMessageId),
     });
 
     const { cleanedMessages, conversationText } = buildSecondaryPrompt({

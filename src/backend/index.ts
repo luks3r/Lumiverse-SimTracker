@@ -247,6 +247,7 @@ const { enqueueSecondaryGeneration } = createSecondaryGeneration({
   buildExampleTrackerBlock,
   formatTrackerPayload,
   rehydrateChatTrackerHistory,
+  getChatTrackerHistory,
   extractTrackerPayloadFromMessage,
   getRecentChatTrackers,
   recordChatTracker,

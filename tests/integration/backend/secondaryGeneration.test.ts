@@ -120,7 +120,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number; sysPrompt?: string } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; targetHistoryPayload?: string; retainTrackerCount?: number; sysPrompt?: string } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -154,6 +154,19 @@ async function runGeneration(
   updates.length = 0;
   notifications.length = 0;
   macroResolutions.length = 0;
+
+  if (options.targetHistoryPayload) {
+    if (!frontendHandler) throw new Error("Frontend handler missing");
+    await frontendHandler({ type: "get_config" }, userId);
+    handlers.get("MESSAGE_TAG_INTERCEPTED")?.({
+      chatId,
+      messageId,
+      tagName: "tracker",
+      attrs: { type: "sim" },
+      content: options.targetHistoryPayload,
+    }, userId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
   const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Secondary generation did not finish")), 2_000);
@@ -387,7 +400,7 @@ describe("secondary generation flow", () => {
     expect(prompt).toContain("Stable baseline traits already present in the previous tracker are authoritative.");
   });
 
-  test("without a retained baseline the character context is included again", async () => {
+  test("Retain 0 omits prior tracker content without re-injecting character context", async () => {
     const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
       sysPrompt: "{{sim_character_context}}",
       priorTracker: '{"worldData":{},"characters":[{"name":"Ayla","ap":70}]}',
@@ -396,8 +409,19 @@ describe("secondary generation flow", () => {
 
     expect(result.type).toBe("secondary_generation_complete");
     const prompt = requests[0].messages[0].content;
-    expect(prompt).toContain("Description: Tall elf");
+    expect(prompt).not.toContain("Description: Tall elf");
     expect(prompt).not.toContain("Previous tracker state:");
+  });
+
+  test("a target message's own side-channel entry does not suppress character bootstrap", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      sysPrompt: "{{sim_character_context}}",
+      targetHistoryPayload: '{"worldData":{},"characters":[{"name":"Ayla"}]}',
+      retainTrackerCount: 0,
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].messages[0].content).toContain("Description: Tall elf");
   });
 
   test("explicit character macros in the preset remain opt-in every turn", async () => {
