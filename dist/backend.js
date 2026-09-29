@@ -6776,6 +6776,42 @@ function getTemplatePresetById(id) {
   return PRESETS.find((preset) => preset.id === id) || PRESETS[0];
 }
 
+// src/shared/trackerConfig.ts
+var FERTILITY_CYCLE_BIAS_VALUES = [
+  "random",
+  "menstruating",
+  "start_follicular",
+  "close_ovulation",
+  "ovulating",
+  "start_luteal",
+  "end_luteal"
+];
+var DEFAULT_CONFIG = {
+  trackerTagName: "tracker",
+  codeBlockIdentifier: "sim",
+  hideSimBlocks: true,
+  templateId: "bento-style-tracker",
+  trackerFormat: "json",
+  retainTrackerCount: 3,
+  enableInlineTemplates: false,
+  userPresets: [],
+  inlinePacks: [],
+  useSecondaryLLM: false,
+  secondaryLLMConnectionId: "",
+  secondaryLLMModel: "",
+  secondaryLLMMessageCount: 5,
+  secondaryLLMTemperature: 0.7,
+  secondaryLLMStripHTML: true,
+  fertilityCycleBias: "random",
+  typeSafeEnabled: false,
+  typeSafeApiKey: "",
+  typeSafeModel: "jev-latest",
+  typeSafeQuickAppend: true,
+  typeSafeVerify: true,
+  typeSafeConception: true,
+  typeSafeConfidenceFloor: 0.6
+};
+
 // node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = Symbol.for("yaml.alias");
 var DOC = Symbol.for("yaml.document");
@@ -12993,42 +13029,6 @@ function formatTrackerForPrompt(raw) {
 `);
 }
 
-// src/shared/trackerConfig.ts
-var FERTILITY_CYCLE_BIAS_VALUES = [
-  "random",
-  "menstruating",
-  "start_follicular",
-  "close_ovulation",
-  "ovulating",
-  "start_luteal",
-  "end_luteal"
-];
-var DEFAULT_CONFIG = {
-  trackerTagName: "tracker",
-  codeBlockIdentifier: "sim",
-  hideSimBlocks: true,
-  templateId: "bento-style-tracker",
-  trackerFormat: "json",
-  retainTrackerCount: 3,
-  enableInlineTemplates: false,
-  userPresets: [],
-  inlinePacks: [],
-  useSecondaryLLM: false,
-  secondaryLLMConnectionId: "",
-  secondaryLLMModel: "",
-  secondaryLLMMessageCount: 5,
-  secondaryLLMTemperature: 0.7,
-  secondaryLLMStripHTML: true,
-  fertilityCycleBias: "random",
-  typeSafeEnabled: false,
-  typeSafeApiKey: "",
-  typeSafeModel: "jev-latest",
-  typeSafeQuickAppend: true,
-  typeSafeVerify: true,
-  typeSafeConception: true,
-  typeSafeConfidenceFloor: 0.6
-};
-
 // src/shared/trackerSyntax.ts
 function sanitizeIdentifier(value) {
   if (typeof value !== "string")
@@ -14461,6 +14461,10 @@ function readWireMessage(value) {
     return null;
   if (record.type === "tracker_history_latest" && record.entry != null && !readWireRecord(record.entry))
     return null;
+  if (record.type === "command_result" && !readWireRecord(record.payload))
+    return null;
+  if (record.type === "connections_list" && !Array.isArray(record.connections))
+    return null;
   return record;
 }
 
@@ -14505,14 +14509,14 @@ function createFrontendMessageHandler(deps) {
       return;
     }
     if (message.type === "set_config") {
-      if (!readWireRecord(message.config)) {
+      const incoming = readWireRecord(message.config);
+      if (!incoming) {
         sendConfigError(userId, "Invalid settings payload.", "save");
         return;
       }
       try {
         await ensureConfigForUser(userId);
         config = deps.readConfig();
-        const incoming = message.config;
         const previousTypeSafeKey = config.typeSafeApiKey.trim();
         config = mergeTrackerConfig(config, incoming);
         deps.writeConfig(config);
@@ -14650,7 +14654,7 @@ function createFrontendMessageHandler(deps) {
       const enabled = typeof message.enabled === "boolean" ? message.enabled : true;
       if (index >= 0 && index < config.inlinePacks.length) {
         const next = config.inlinePacks.slice();
-        next[index] = { ...next[index], enabled };
+        next[index] = { ...readWireRecord(next[index]), enabled };
         config = { ...config, inlinePacks: next };
         deps.writeConfig(config);
         await saveConfig(userId);
@@ -15963,17 +15967,94 @@ function createSettingsStore(deps) {
   return { loadConfig, saveConfig, syncTypeSafeKeyToEnclave };
 }
 
+// src/backend/trackerSession.ts
+function createTrackerSession(deps) {
+  const latestTrackerByChat = new Map;
+  let selectedChatId = null;
+  let selectedChatKnown = false;
+  let activeChatId = null;
+  const readLastSimStats = (chatId) => {
+    if (!chatId)
+      return "{}";
+    return latestTrackerByChat.get(chatId) ?? deps.getChatTrackerHistory(chatId).at(-1)?.payload ?? "{}";
+  };
+  const publishSelectedTracker = () => {
+    deps.publishMacroValue(formatTrackerForPrompt(readLastSimStats(selectedChatId)));
+  };
+  const selectChat = (chatId) => {
+    selectedChatKnown = true;
+    selectedChatId = chatId;
+    publishSelectedTracker();
+  };
+  const recordChatTracker = (chatId, messageId, payload) => {
+    deps.recordHistoryTracker(chatId, messageId, payload);
+    if (!chatId)
+      return;
+    latestTrackerByChat.set(chatId, payload);
+    if (!selectedChatKnown)
+      selectChat(chatId);
+    else if (selectedChatId === chatId)
+      publishSelectedTracker();
+  };
+  const forgetChatTracker = (chatId, messageId) => {
+    deps.forgetHistoryTracker(chatId, messageId);
+    if (!chatId)
+      return;
+    const latest = deps.getChatTrackerHistory(chatId).at(-1)?.payload;
+    if (latest)
+      latestTrackerByChat.set(chatId, latest);
+    else
+      latestTrackerByChat.delete(chatId);
+    if (selectedChatId === chatId)
+      publishSelectedTracker();
+  };
+  const rehydrateChatTrackerHistory = async (chatId) => {
+    await deps.rehydrateHistory(chatId);
+    if (!chatId)
+      return;
+    const latest = deps.getChatTrackerHistory(chatId).at(-1)?.payload;
+    if (latest)
+      latestTrackerByChat.set(chatId, latest);
+    if (selectedChatId === chatId)
+      publishSelectedTracker();
+  };
+  const writeLastSimStats = (chatId, value, messageId) => {
+    if (!chatId)
+      return;
+    if (messageId) {
+      recordChatTracker(chatId, messageId, value);
+      return;
+    }
+    latestTrackerByChat.set(chatId, value);
+    if (!selectedChatKnown)
+      selectChat(chatId);
+    else if (selectedChatId === chatId)
+      publishSelectedTracker();
+  };
+  return {
+    readLastSimStats,
+    writeLastSimStats,
+    publishSelectedTracker,
+    selectChat,
+    recordChatTracker,
+    forgetChatTracker,
+    rehydrateChatTrackerHistory,
+    isSelectedChatKnown: () => selectedChatKnown,
+    readSelectedChatId: () => selectedChatId,
+    readActiveChatId: () => activeChatId,
+    setActiveChatId: (chatId) => {
+      activeChatId = chatId;
+    }
+  };
+}
+
 // src/backend/index.ts
 var typeSafeCorsTransport = (url, options) => spindle.cors(url, options);
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
 var config = { ...DEFAULT_CONFIG };
-var latestTrackerByChat = new Map;
-var selectedChatId = null;
-var selectedChatKnown = false;
 var activeUserId = null;
 var loadedConfigUserId = null;
 var firstMessageFertilityHint = "";
-var activeChatId = null;
 var runtime = {
   grantedPermissions: new Set,
   seededPresets: [],
@@ -16005,64 +16086,25 @@ var {
   extractTrackerPayloadFromMessage,
   readRetainCount: () => config.retainTrackerCount
 });
-function readLastSimStats(chatId) {
-  if (!chatId)
-    return "{}";
-  return latestTrackerByChat.get(chatId) ?? getChatTrackerHistory(chatId).at(-1)?.payload ?? "{}";
-}
-function publishSelectedTracker() {
-  spindle.updateMacroValue("last_sim_stats", formatTrackerForPrompt(readLastSimStats(selectedChatId)));
-}
-function selectChat(chatId) {
-  selectedChatKnown = true;
-  selectedChatId = chatId;
-  publishSelectedTracker();
-}
-function recordChatTracker(chatId, messageId, payload) {
-  recordHistoryTracker(chatId, messageId, payload);
-  if (!chatId)
-    return;
-  latestTrackerByChat.set(chatId, payload);
-  if (!selectedChatKnown)
-    selectChat(chatId);
-  else if (selectedChatId === chatId)
-    publishSelectedTracker();
-}
-function forgetChatTracker(chatId, messageId) {
-  forgetHistoryTracker(chatId, messageId);
-  if (!chatId)
-    return;
-  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
-  if (latest)
-    latestTrackerByChat.set(chatId, latest);
-  else
-    latestTrackerByChat.delete(chatId);
-  if (selectedChatId === chatId)
-    publishSelectedTracker();
-}
-async function rehydrateChatTrackerHistory(chatId) {
-  await rehydrateHistory(chatId);
-  if (!chatId)
-    return;
-  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
-  if (latest)
-    latestTrackerByChat.set(chatId, latest);
-  if (selectedChatId === chatId)
-    publishSelectedTracker();
-}
-function writeLastSimStats(chatId, value, messageId) {
-  if (!chatId)
-    return;
-  if (messageId) {
-    recordChatTracker(chatId, messageId, value);
-    return;
-  }
-  latestTrackerByChat.set(chatId, value);
-  if (!selectedChatKnown)
-    selectChat(chatId);
-  else if (selectedChatId === chatId)
-    publishSelectedTracker();
-}
+var {
+  readLastSimStats,
+  writeLastSimStats,
+  publishSelectedTracker,
+  selectChat,
+  recordChatTracker,
+  forgetChatTracker,
+  rehydrateChatTrackerHistory,
+  isSelectedChatKnown,
+  readSelectedChatId,
+  readActiveChatId,
+  setActiveChatId
+} = createTrackerSession({
+  recordHistoryTracker,
+  forgetHistoryTracker,
+  getChatTrackerHistory,
+  rehydrateHistory,
+  publishMacroValue: (value) => spindle.updateMacroValue("last_sim_stats", value)
+});
 var { handleSlashCommand } = createCommandEngine({
   readConfig: () => config,
   readLastSimStats,
@@ -16160,9 +16202,7 @@ registerMessageEvents({
   spindle,
   readConfig: () => config,
   readActiveUserId: () => activeUserId,
-  setActiveChatId: (value) => {
-    activeChatId = value;
-  },
+  setActiveChatId,
   ensureConfigForUser,
   rehydrateChatTrackerHistory,
   handleSlashCommand,
@@ -16193,11 +16233,9 @@ registerChatLifecycleEvents({
   spindle,
   readConfig: () => config,
   ensureConfigForUser,
-  isSelectedChatKnown: () => selectedChatKnown,
+  isSelectedChatKnown,
   selectChat,
-  setActiveChatId: (value) => {
-    activeChatId = value;
-  },
+  setActiveChatId,
   rehydrateChatTrackerHistory,
   getChatTrackerHistory,
   readFirstMessageFertilityHint: () => firstMessageFertilityHint,
@@ -16214,7 +16252,7 @@ registerChatLifecycleEvents({
 var { tryRegisterInterceptor } = createPromptInterceptor({
   spindle,
   readConfig: () => config,
-  readActiveChatId: () => activeChatId,
+  readActiveChatId,
   hasPermission,
   trackerMessageCodec,
   rehydrateChatTrackerHistory,
@@ -16305,11 +16343,9 @@ spindle.onFrontendMessage(createFrontendMessageHandler({
   setActiveUserId: (value) => {
     activeUserId = value;
   },
-  setActiveChatId: (value) => {
-    activeChatId = value;
-  },
-  isSelectedChatKnown: () => selectedChatKnown,
-  readSelectedChatId: () => selectedChatId,
+  setActiveChatId,
+  isSelectedChatKnown,
+  readSelectedChatId,
   selectChat,
   loadConfig,
   ensureConfigForUser,

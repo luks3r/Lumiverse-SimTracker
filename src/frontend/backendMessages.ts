@@ -5,7 +5,7 @@ import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { CONFIG_ERROR_STATUS_PREFIX, DEFAULT_PANEL_STATUS } from "./frontendPanel";
 import type { ConnectionProfile } from "./frontendControls";
 import type { TrackerHydration } from "./trackerHydration";
-import { readWireMessage } from "../shared/wireMessages";
+import { readWireConnectionProfiles, readWireMessage, readWireRecord, readWireRecords, readWireTemplatePresets } from "../shared/wireMessages";
 
 export function registerBackendMessages(deps: {
   ctx: SpindleFrontendContext;
@@ -77,9 +77,10 @@ export function registerBackendMessages(deps: {
       hydration.requestInitial();
       return;
     }
-    if (obj?.type === "command_result" && obj.payload && typeof obj.payload === "object") {
-      showCommandResult(obj.payload as Record<string, unknown>);
-      const cmd = (obj.payload as Record<string, unknown>).command;
+    const commandPayload = obj.type === "command_result" ? readWireRecord(obj.payload) : null;
+    if (commandPayload) {
+      showCommandResult(commandPayload);
+      const cmd = commandPayload.command;
       if (typeof cmd === "string") {
         setStatus(`Handled /${cmd}`);
       }
@@ -112,7 +113,7 @@ export function registerBackendMessages(deps: {
       return;
     }
     if (obj?.type === "connections_list" && Array.isArray(obj.connections)) {
-      state.connections = obj.connections as ConnectionProfile[];
+      state.connections = readWireConnectionProfiles(obj.connections);
       populateConnectionDropdown();
       if (state.connections.length) {
         setLLMStatus(`${state.connections.length} connection(s) available`);
@@ -161,7 +162,7 @@ export function registerBackendMessages(deps: {
     }
     if (obj?.type === "tracker_history_latest") {
       const responseChatId = typeof obj.chatId === "string" ? obj.chatId : null;
-      const entry = obj.entry as { messageId?: unknown; payload?: unknown; previousPayload?: unknown } | null;
+      const entry = readWireRecord(obj.entry);
       hydration.acceptLatest(responseChatId, entry);
       return;
     }
@@ -174,8 +175,9 @@ export function registerBackendMessages(deps: {
       updatePermissionGatedControls();
       return;
     }
-    if (obj?.type !== "config" || !obj.config || typeof obj.config !== "object") return;
-    const incoming = obj.config as Record<string, unknown>;
+    if (obj?.type !== "config") return;
+    const incoming = readWireRecord(obj.config);
+    if (!incoming) return;
     state.grantedPermissions = Array.isArray(obj.grantedPermissions)
       ? obj.grantedPermissions.filter((p): p is string => typeof p === "string")
       : state.grantedPermissions;
@@ -183,11 +185,9 @@ export function registerBackendMessages(deps: {
       ? obj.requestedPermissions.filter((p): p is string => typeof p === "string")
       : state.requestedPermissions;
     if (Array.isArray(obj.seededPresets)) {
-      panelHost.setSeededPresets(obj.seededPresets as TemplatePreset[]);
+      panelHost.setSeededPresets(readWireTemplatePresets(obj.seededPresets));
     }
-    state.ephemeralPoolStatus = obj.ephemeralPoolStatus && typeof obj.ephemeralPoolStatus === "object"
-      ? (obj.ephemeralPoolStatus as Record<string, unknown>)
-      : null;
+    state.ephemeralPoolStatus = readWireRecord(obj.ephemeralPoolStatus);
     state.config = {
       trackerTagName: typeof incoming.trackerTagName === "string" ? sanitizeTagName(incoming.trackerTagName) : DEFAULT_CONFIG.trackerTagName,
       codeBlockIdentifier: typeof incoming.codeBlockIdentifier === "string" ? sanitizeIdentifier(incoming.codeBlockIdentifier) : DEFAULT_CONFIG.codeBlockIdentifier,
@@ -199,8 +199,8 @@ export function registerBackendMessages(deps: {
         typeof incoming.enableInlineTemplates === "boolean"
           ? incoming.enableInlineTemplates
           : DEFAULT_CONFIG.enableInlineTemplates,
-      userPresets: Array.isArray(incoming.userPresets) ? (incoming.userPresets as TemplatePreset[]) : [],
-      inlinePacks: Array.isArray(incoming.inlinePacks) ? (incoming.inlinePacks as Array<Record<string, unknown>>) : [],
+      userPresets: readWireTemplatePresets(incoming.userPresets),
+      inlinePacks: readWireRecords(incoming.inlinePacks),
       useSecondaryLLM: typeof incoming.useSecondaryLLM === "boolean" ? incoming.useSecondaryLLM : DEFAULT_CONFIG.useSecondaryLLM,
       secondaryLLMConnectionId: typeof incoming.secondaryLLMConnectionId === "string" ? incoming.secondaryLLMConnectionId : DEFAULT_CONFIG.secondaryLLMConnectionId,
       secondaryLLMModel: typeof incoming.secondaryLLMModel === "string" ? incoming.secondaryLLMModel : DEFAULT_CONFIG.secondaryLLMModel,

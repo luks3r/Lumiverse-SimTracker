@@ -98,7 +98,7 @@ export function normalizeStoredConfig(parsed: Partial<TrackerConfig>): TrackerCo
   };
 }
 
-export function mergeTrackerConfig(config: TrackerConfig, incoming: Partial<TrackerConfig> | undefined): TrackerConfig {
+export function mergeTrackerConfig(config: TrackerConfig, incoming: Record<string, unknown> | undefined): TrackerConfig {
   return {
     trackerTagName: sanitizeTagName(incoming?.trackerTagName ?? config.trackerTagName),
     codeBlockIdentifier: sanitizeIdentifier(incoming?.codeBlockIdentifier ?? config.codeBlockIdentifier),

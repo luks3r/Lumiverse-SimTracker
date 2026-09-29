@@ -121,16 +121,15 @@ export function setup(ctx: SpindleFrontendContext) {
   });
 
   const {
-    clearMessageTrackerRender,
-    clearLatestMessageRenderIntent,
-    retryLatestMessageRenderIntent,
-    clearSideTrackerRender,
     showGeneratingIndicator,
     hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
-    retryGeneratingIndicator,
+    resetForChat,
+    clearForSwipe,
+    forgetMessage,
+    dispose: disposeTrackerRendering,
     handleTrackerPayload,
     handleContent,
+    handleMessageRendered,
   } = createTrackerRendering({
     ctx,
     byId,
@@ -221,22 +220,6 @@ export function setup(ctx: SpindleFrontendContext) {
     state: {
       get configReady() { return configReady; },
       set configReady(value) { configReady = value; },
-      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
-      get previousTrackerData() { return renderState.previousTrackerData; },
-      set previousTrackerData(value) { renderState.previousTrackerData = value; },
-      trackerComparisonBaselines: renderState.trackerComparisonBaselines,
-      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
-      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
-      get latestContent() { return renderState.latestContent; },
-      set latestContent(value) { renderState.latestContent = value; },
-      get latestMessageRenderIntent() { return renderState.latestMessageRenderIntent; },
-      set latestMessageRenderIntent(value) { renderState.latestMessageRenderIntent = value; },
-      trackerMessageRenders: renderState.trackerMessageRenders,
-      trackerMessageIds: renderState.trackerMessageIds,
-      trackerMessageMounts: renderState.trackerMessageMounts,
       get grantedPermissions() { return grantedPermissions; },
       set grantedPermissions(value) { grantedPermissions = value; },
       get requestedPermissions() { return requestedPermissions; },
@@ -249,13 +232,10 @@ export function setup(ctx: SpindleFrontendContext) {
     updateRegenerateButton,
     renderEmpty,
     handleContent,
-    clearSideTrackerRender,
-    clearMessageTrackerRender,
-    retryLatestMessageRenderIntent,
-    retryGeneratingIndicator,
-    clearLatestMessageRenderIntent,
-    hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
+    handleMessageRendered,
+    resetTrackerForChat: resetForChat,
+    clearForSwipe,
+    forgetMessage,
     renderCapabilities,
     updatePermissionGatedControls,
   });
@@ -343,11 +323,7 @@ export function setup(ctx: SpindleFrontendContext) {
     permissionUnsub();
     if (removeHideStyle) removeHideStyle();
     if (removeTagInterceptor) removeTagInterceptor();
-    clearSideTrackerRender();
-    for (const mount of renderState.trackerMessageMounts.values()) ctx.dom.uninject(mount);
-    renderState.trackerMessageMounts.clear();
-    renderState.trackerMessageRenders.clear();
-    hideAllGeneratingIndicators();
+    disposeTrackerRendering();
     inlineProcessor.destroy();
     removePanelStyle();
     ctx.dom.cleanup();

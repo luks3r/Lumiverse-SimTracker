@@ -12585,6 +12585,66 @@ function createTrackerRendering(deps) {
     state.trackerGeneratingIndicators.clear();
     state.pendingGeneratingIndicatorMessageId = null;
   };
+  const resetForChat = () => {
+    state.previousTrackerData = null;
+    state.trackerComparisonBaselines.clear();
+    state.latestTrackerMessageId = null;
+    state.latestTrackerRaw = null;
+    state.latestTrackerSourceContent = null;
+    state.latestContent = null;
+    state.latestMessageRenderIntent = null;
+    state.trackerMessageIds.clear();
+    updateRegenerateButton();
+    for (const mount of state.trackerMessageMounts.values())
+      ctx.dom.uninject(mount);
+    state.trackerMessageMounts.clear();
+    state.trackerMessageRenders.clear();
+    hideAllGeneratingIndicators();
+    clearSideTrackerRender();
+  };
+  const clearForSwipe = (messageId, clearInlineMessage) => {
+    clearSideTrackerRender();
+    if (state.latestTrackerMessageId) {
+      clearMessageTrackerRender(state.latestTrackerMessageId);
+      clearInlineMessage(state.latestTrackerMessageId);
+    }
+    if (messageId)
+      clearInlineMessage(messageId);
+    state.previousTrackerData = null;
+    state.trackerComparisonBaselines.clear();
+    state.latestTrackerRaw = null;
+    state.latestTrackerSourceContent = null;
+    state.latestContent = null;
+    state.latestMessageRenderIntent = null;
+  };
+  const forgetMessage = (messageId, clearInlineMessage) => {
+    if (state.trackerMessageIds.has(messageId)) {
+      state.trackerMessageIds.delete(messageId);
+      clearLatestMessageRenderIntent(messageId);
+      clearMessageTrackerRender(messageId);
+    }
+    state.trackerComparisonBaselines.delete(messageId);
+    hideGeneratingIndicator(messageId);
+    clearInlineMessage(messageId);
+    if (state.latestTrackerMessageId === messageId) {
+      state.latestTrackerMessageId = null;
+      state.previousTrackerData = null;
+      state.trackerComparisonBaselines.clear();
+      state.latestTrackerRaw = null;
+      state.latestTrackerSourceContent = null;
+      state.latestContent = null;
+      clearSideTrackerRender();
+      updateRegenerateButton();
+    }
+  };
+  const dispose = () => {
+    clearSideTrackerRender();
+    for (const mount of state.trackerMessageMounts.values())
+      ctx.dom.uninject(mount);
+    state.trackerMessageMounts.clear();
+    state.trackerMessageRenders.clear();
+    hideAllGeneratingIndicators();
+  };
   const retryGeneratingIndicator = (messageId) => {
     if (!messageId || state.pendingGeneratingIndicatorMessageId !== messageId)
       return;
@@ -12722,7 +12782,19 @@ function createTrackerRendering(deps) {
     }
     handleTrackerPayload(raw, content, messageId);
   };
+  const handleMessageRendered = (messageId, content) => {
+    retryLatestMessageRenderIntent(messageId);
+    retryGeneratingIndicator(messageId);
+    const latestMountedId = ctx.messages.getLatestMessageId();
+    const needsLatestAttach = !!messageId && messageId === latestMountedId && state.latestMessageRenderIntent?.messageId !== messageId && !state.trackerMessageRenders.has(messageId);
+    if (needsLatestAttach && content)
+      handleContent(content, messageId);
+  };
   return {
+    resetForChat,
+    clearForSwipe,
+    forgetMessage,
+    dispose,
     clearMessageTrackerRender,
     pruneNonLatestMessageTrackers,
     clearLatestMessageRenderIntent,
@@ -12733,7 +12805,8 @@ function createTrackerRendering(deps) {
     hideAllGeneratingIndicators,
     retryGeneratingIndicator,
     handleTrackerPayload,
-    handleContent
+    handleContent,
+    handleMessageRendered
   };
 }
 
@@ -20150,6 +20223,18 @@ function sanitizeTagName(value) {
 function readWireRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
+function readWireRecords(value) {
+  return Array.isArray(value) ? value.filter((item) => readWireRecord(item) !== null) : [];
+}
+function readWireTemplatePresets(value) {
+  return readWireRecords(value).filter((item) => typeof item.id === "string" && typeof item.templateName === "string" && (item.templateAuthor === undefined || typeof item.templateAuthor === "string") && (item.htmlTemplate === undefined || typeof item.htmlTemplate === "string") && (item.sysPrompt === undefined || typeof item.sysPrompt === "string") && (item.displayInstructions === undefined || typeof item.displayInstructions === "string") && (item.inlineTemplatesEnabled === undefined || typeof item.inlineTemplatesEnabled === "boolean") && (item.inlineTemplates === undefined || Array.isArray(item.inlineTemplates)) && (item.templatePosition === undefined || typeof item.templatePosition === "string") && (item.customFields === undefined || Array.isArray(item.customFields) && item.customFields.every((field) => {
+    const record = readWireRecord(field);
+    return record && typeof record.key === "string" && typeof record.description === "string";
+  })) && (item.extSettings === undefined || readWireRecord(item.extSettings) !== null));
+}
+function readWireConnectionProfiles(value) {
+  return readWireRecords(value).filter((item) => typeof item.id === "string" && typeof item.name === "string" && typeof item.provider === "string" && typeof item.model === "string" && typeof item.is_default === "boolean" && typeof item.has_api_key === "boolean");
+}
 function readWireMessage(value) {
   const record = readWireRecord(value);
   if (!record || typeof record.type !== "string")
@@ -20157,6 +20242,10 @@ function readWireMessage(value) {
   if (record.type === "config" && !readWireRecord(record.config))
     return null;
   if (record.type === "tracker_history_latest" && record.entry != null && !readWireRecord(record.entry))
+    return null;
+  if (record.type === "command_result" && !readWireRecord(record.payload))
+    return null;
+  if (record.type === "connections_list" && !Array.isArray(record.connections))
     return null;
   return record;
 }
@@ -20206,9 +20295,10 @@ function registerBackendMessages(deps) {
       hydration.requestInitial();
       return;
     }
-    if (obj?.type === "command_result" && obj.payload && typeof obj.payload === "object") {
-      showCommandResult(obj.payload);
-      const cmd = obj.payload.command;
+    const commandPayload = obj.type === "command_result" ? readWireRecord(obj.payload) : null;
+    if (commandPayload) {
+      showCommandResult(commandPayload);
+      const cmd = commandPayload.command;
       if (typeof cmd === "string") {
         setStatus(`Handled /${cmd}`);
       }
@@ -20242,7 +20332,7 @@ function registerBackendMessages(deps) {
       return;
     }
     if (obj?.type === "connections_list" && Array.isArray(obj.connections)) {
-      state.connections = obj.connections;
+      state.connections = readWireConnectionProfiles(obj.connections);
       populateConnectionDropdown();
       if (state.connections.length) {
         setLLMStatus(`${state.connections.length} connection(s) available`);
@@ -20300,7 +20390,7 @@ function registerBackendMessages(deps) {
     }
     if (obj?.type === "tracker_history_latest") {
       const responseChatId = typeof obj.chatId === "string" ? obj.chatId : null;
-      const entry = obj.entry;
+      const entry = readWireRecord(obj.entry);
       hydration.acceptLatest(responseChatId, entry);
       return;
     }
@@ -20311,15 +20401,17 @@ function registerBackendMessages(deps) {
       updatePermissionGatedControls();
       return;
     }
-    if (obj?.type !== "config" || !obj.config || typeof obj.config !== "object")
+    if (obj?.type !== "config")
       return;
-    const incoming = obj.config;
+    const incoming = readWireRecord(obj.config);
+    if (!incoming)
+      return;
     state.grantedPermissions = Array.isArray(obj.grantedPermissions) ? obj.grantedPermissions.filter((p) => typeof p === "string") : state.grantedPermissions;
     state.requestedPermissions = Array.isArray(obj.requestedPermissions) ? obj.requestedPermissions.filter((p) => typeof p === "string") : state.requestedPermissions;
     if (Array.isArray(obj.seededPresets)) {
-      panelHost.setSeededPresets(obj.seededPresets);
+      panelHost.setSeededPresets(readWireTemplatePresets(obj.seededPresets));
     }
-    state.ephemeralPoolStatus = obj.ephemeralPoolStatus && typeof obj.ephemeralPoolStatus === "object" ? obj.ephemeralPoolStatus : null;
+    state.ephemeralPoolStatus = readWireRecord(obj.ephemeralPoolStatus);
     state.config = {
       trackerTagName: typeof incoming.trackerTagName === "string" ? sanitizeTagName(incoming.trackerTagName) : DEFAULT_CONFIG.trackerTagName,
       codeBlockIdentifier: typeof incoming.codeBlockIdentifier === "string" ? sanitizeIdentifier(incoming.codeBlockIdentifier) : DEFAULT_CONFIG.codeBlockIdentifier,
@@ -20328,8 +20420,8 @@ function registerBackendMessages(deps) {
       trackerFormat: incoming.trackerFormat === "yaml" ? "yaml" : "json",
       retainTrackerCount: typeof incoming.retainTrackerCount === "number" ? incoming.retainTrackerCount : DEFAULT_CONFIG.retainTrackerCount,
       enableInlineTemplates: typeof incoming.enableInlineTemplates === "boolean" ? incoming.enableInlineTemplates : DEFAULT_CONFIG.enableInlineTemplates,
-      userPresets: Array.isArray(incoming.userPresets) ? incoming.userPresets : [],
-      inlinePacks: Array.isArray(incoming.inlinePacks) ? incoming.inlinePacks : [],
+      userPresets: readWireTemplatePresets(incoming.userPresets),
+      inlinePacks: readWireRecords(incoming.inlinePacks),
       useSecondaryLLM: typeof incoming.useSecondaryLLM === "boolean" ? incoming.useSecondaryLLM : DEFAULT_CONFIG.useSecondaryLLM,
       secondaryLLMConnectionId: typeof incoming.secondaryLLMConnectionId === "string" ? incoming.secondaryLLMConnectionId : DEFAULT_CONFIG.secondaryLLMConnectionId,
       secondaryLLMModel: typeof incoming.secondaryLLMModel === "string" ? incoming.secondaryLLMModel : DEFAULT_CONFIG.secondaryLLMModel,
@@ -20444,13 +20536,6 @@ function registerChatEvents(deps) {
     updateRegenerateButton,
     renderEmpty,
     handleContent,
-    clearSideTrackerRender,
-    clearMessageTrackerRender,
-    retryLatestMessageRenderIntent,
-    retryGeneratingIndicator,
-    clearLatestMessageRenderIntent,
-    hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
     renderCapabilities,
     updatePermissionGatedControls
   } = deps;
@@ -20520,19 +20605,7 @@ function registerChatEvents(deps) {
       return;
     if (context.isUser === true)
       return;
-    clearSideTrackerRender();
-    if (state.latestTrackerMessageId) {
-      clearMessageTrackerRender(state.latestTrackerMessageId);
-      inlineProcessor.clearMessage(state.latestTrackerMessageId);
-    }
-    if (context.messageId)
-      inlineProcessor.clearMessage(context.messageId);
-    state.previousTrackerData = null;
-    state.trackerComparisonBaselines.clear();
-    state.latestTrackerRaw = null;
-    state.latestTrackerSourceContent = null;
-    state.latestContent = null;
-    state.latestMessageRenderIntent = null;
+    deps.clearForSwipe(context.messageId, (id) => inlineProcessor.clearMessage(id));
     if (context.content) {
       handleContent(context.content, context.messageId);
     }
@@ -20544,13 +20617,7 @@ function registerChatEvents(deps) {
     const context = readMessageContext(payload);
     if (!context || context.isUser === true)
       return;
-    retryLatestMessageRenderIntent(context.messageId);
-    retryGeneratingIndicator(context.messageId);
-    const latestMountedId = ctx.messages.getLatestMessageId();
-    const needsLatestAttach = !!context.messageId && context.messageId === latestMountedId && state.latestMessageRenderIntent?.messageId !== context.messageId && !state.trackerMessageRenders.has(context.messageId);
-    if (needsLatestAttach && context.content) {
-      handleContent(context.content, context.messageId);
-    }
+    deps.handleMessageRendered(context.messageId, context.content);
     runInlinePass(context.messageId);
   };
   const onMessageDeleted = (payload) => {
@@ -20559,41 +20626,10 @@ function registerChatEvents(deps) {
     const context = readMessageContext(payload);
     if (!context || !context.messageId)
       return;
-    if (state.trackerMessageIds.has(context.messageId)) {
-      state.trackerMessageIds.delete(context.messageId);
-      clearLatestMessageRenderIntent(context.messageId);
-      clearMessageTrackerRender(context.messageId);
-    }
-    state.trackerComparisonBaselines.delete(context.messageId);
-    hideGeneratingIndicator(context.messageId);
-    inlineProcessor.clearMessage(context.messageId);
-    if (state.latestTrackerMessageId === context.messageId) {
-      state.latestTrackerMessageId = null;
-      state.previousTrackerData = null;
-      state.trackerComparisonBaselines.clear();
-      state.latestTrackerRaw = null;
-      state.latestTrackerSourceContent = null;
-      state.latestContent = null;
-      clearSideTrackerRender();
-      updateRegenerateButton();
-    }
+    deps.forgetMessage(context.messageId, (id) => inlineProcessor.clearMessage(id));
   };
   const resetChatState = () => {
-    state.previousTrackerData = null;
-    state.trackerComparisonBaselines.clear();
-    state.latestTrackerMessageId = null;
-    state.latestTrackerRaw = null;
-    state.latestTrackerSourceContent = null;
-    state.latestContent = null;
-    state.latestMessageRenderIntent = null;
-    state.trackerMessageIds.clear();
-    updateRegenerateButton();
-    for (const mount of state.trackerMessageMounts.values())
-      ctx.dom.uninject(mount);
-    state.trackerMessageMounts.clear();
-    state.trackerMessageRenders.clear();
-    hideAllGeneratingIndicators();
-    clearSideTrackerRender();
+    deps.resetTrackerForChat();
     inlineProcessor.destroy();
   };
   const generationUnsub = ctx.events.on("GENERATION_ENDED", onEvent);
@@ -21414,16 +21450,15 @@ function setup(ctx) {
     isImportedTemplate
   });
   const {
-    clearMessageTrackerRender,
-    clearLatestMessageRenderIntent,
-    retryLatestMessageRenderIntent,
-    clearSideTrackerRender,
     showGeneratingIndicator,
     hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
-    retryGeneratingIndicator,
+    resetForChat,
+    clearForSwipe,
+    forgetMessage,
+    dispose: disposeTrackerRendering,
     handleTrackerPayload,
-    handleContent
+    handleContent,
+    handleMessageRendered
   } = createTrackerRendering({
     ctx,
     byId,
@@ -21563,46 +21598,6 @@ function setup(ctx) {
       set configReady(value) {
         configReady = value;
       },
-      get latestTrackerMessageId() {
-        return renderState.latestTrackerMessageId;
-      },
-      set latestTrackerMessageId(value) {
-        renderState.latestTrackerMessageId = value;
-      },
-      get previousTrackerData() {
-        return renderState.previousTrackerData;
-      },
-      set previousTrackerData(value) {
-        renderState.previousTrackerData = value;
-      },
-      trackerComparisonBaselines: renderState.trackerComparisonBaselines,
-      get latestTrackerRaw() {
-        return renderState.latestTrackerRaw;
-      },
-      set latestTrackerRaw(value) {
-        renderState.latestTrackerRaw = value;
-      },
-      get latestTrackerSourceContent() {
-        return renderState.latestTrackerSourceContent;
-      },
-      set latestTrackerSourceContent(value) {
-        renderState.latestTrackerSourceContent = value;
-      },
-      get latestContent() {
-        return renderState.latestContent;
-      },
-      set latestContent(value) {
-        renderState.latestContent = value;
-      },
-      get latestMessageRenderIntent() {
-        return renderState.latestMessageRenderIntent;
-      },
-      set latestMessageRenderIntent(value) {
-        renderState.latestMessageRenderIntent = value;
-      },
-      trackerMessageRenders: renderState.trackerMessageRenders,
-      trackerMessageIds: renderState.trackerMessageIds,
-      trackerMessageMounts: renderState.trackerMessageMounts,
       get grantedPermissions() {
         return grantedPermissions;
       },
@@ -21627,13 +21622,10 @@ function setup(ctx) {
     updateRegenerateButton,
     renderEmpty,
     handleContent,
-    clearSideTrackerRender,
-    clearMessageTrackerRender,
-    retryLatestMessageRenderIntent,
-    retryGeneratingIndicator,
-    clearLatestMessageRenderIntent,
-    hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
+    handleMessageRendered,
+    resetTrackerForChat: resetForChat,
+    clearForSwipe,
+    forgetMessage,
     renderCapabilities,
     updatePermissionGatedControls
   });
@@ -21746,12 +21738,7 @@ function setup(ctx) {
       removeHideStyle();
     if (removeTagInterceptor)
       removeTagInterceptor();
-    clearSideTrackerRender();
-    for (const mount of renderState.trackerMessageMounts.values())
-      ctx.dom.uninject(mount);
-    renderState.trackerMessageMounts.clear();
-    renderState.trackerMessageRenders.clear();
-    hideAllGeneratingIndicators();
+    disposeTrackerRendering();
     inlineProcessor.destroy();
     removePanelStyle();
     ctx.dom.cleanup();

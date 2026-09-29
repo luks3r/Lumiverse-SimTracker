@@ -1,16 +1,9 @@
 import type { SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
 import type { TrackerConfig } from "../shared/trackerConfig";
 import type { TrackerHydration } from "./trackerHydration";
-import type { FrontendToBackendMessage } from "../shared/wireMessages";
+import type { FrontendToBackendMessage, WireConnectionProfile } from "../shared/wireMessages";
 
-export type ConnectionProfile = {
-  id: string;
-  name: string;
-  provider: string;
-  model: string;
-  is_default: boolean;
-  has_api_key: boolean;
-};
+export type ConnectionProfile = WireConnectionProfile;
 
 export function createFrontendControls(deps: {
   ctx: SpindleFrontendContext;

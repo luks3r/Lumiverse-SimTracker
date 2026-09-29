@@ -1,5 +1,4 @@
 import { getTemplatePresetById, getTemplatePresets, mergeTemplatePresets, type TemplatePreset } from "../shared/templatePresets";
-import { formatTrackerForPrompt } from "./trackerPayload";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { createTrackerMessageCodec } from "./trackerMessageCodec";
 import { createTrackerHistory } from "./trackerHistory";
@@ -15,6 +14,7 @@ import { createConceptionGate } from "./conceptionGate";
 import { createMacroPublisher } from "./macroPublisher";
 import { createCommandEngine } from "./commandEngine";
 import { createSettingsStore } from "./settingsStore";
+import { createTrackerSession } from "./trackerSession";
 import type { TypeSafeCorsTransport } from "./typesafe";
 import type { BackendToFrontendMessage } from "../shared/wireMessages";
 
@@ -38,9 +38,6 @@ declare const spindle: import("lumiverse-spindle-types").SpindleAPI & {
 spindle.frontendCapabilities?.declare("message_tag_interceptor");
 
 let config: TrackerConfig = { ...DEFAULT_CONFIG };
-const latestTrackerByChat = new Map<string, string>();
-let selectedChatId: string | null = null;
-let selectedChatKnown = false;
 let activeUserId: string | null = null;
 let loadedConfigUserId: string | null = null;
 let firstMessageFertilityHint = "";
@@ -52,7 +49,6 @@ let firstMessageFertilityHint = "";
  * any other event that surfaces a chat id. Used as a fallback when the
  * interceptor context can't be parsed.
  */
-let activeChatId: string | null = null;
 
 const runtime = {
   grantedPermissions: new Set<string>(),
@@ -90,56 +86,25 @@ const {
   extractTrackerPayloadFromMessage,
   readRetainCount: () => config.retainTrackerCount,
 });
-function readLastSimStats(chatId: string | null): string {
-  if (!chatId) return "{}";
-  return latestTrackerByChat.get(chatId) ?? getChatTrackerHistory(chatId).at(-1)?.payload ?? "{}";
-}
-
-function publishSelectedTracker(): void {
-  spindle.updateMacroValue("last_sim_stats", formatTrackerForPrompt(readLastSimStats(selectedChatId)));
-}
-
-function selectChat(chatId: string | null): void {
-  selectedChatKnown = true;
-  selectedChatId = chatId;
-  publishSelectedTracker();
-}
-
-function recordChatTracker(chatId: string | null, messageId: string | null, payload: string): void {
-  recordHistoryTracker(chatId, messageId, payload);
-  if (!chatId) return;
-  latestTrackerByChat.set(chatId, payload);
-  if (!selectedChatKnown) selectChat(chatId);
-  else if (selectedChatId === chatId) publishSelectedTracker();
-}
-
-function forgetChatTracker(chatId: string | null, messageId: string | null): void {
-  forgetHistoryTracker(chatId, messageId);
-  if (!chatId) return;
-  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
-  if (latest) latestTrackerByChat.set(chatId, latest);
-  else latestTrackerByChat.delete(chatId);
-  if (selectedChatId === chatId) publishSelectedTracker();
-}
-
-async function rehydrateChatTrackerHistory(chatId: string | null): Promise<void> {
-  await rehydrateHistory(chatId);
-  if (!chatId) return;
-  const latest = getChatTrackerHistory(chatId).at(-1)?.payload;
-  if (latest) latestTrackerByChat.set(chatId, latest);
-  if (selectedChatId === chatId) publishSelectedTracker();
-}
-
-function writeLastSimStats(chatId: string | null, value: string, messageId?: string | null): void {
-  if (!chatId) return;
-  if (messageId) {
-    recordChatTracker(chatId, messageId, value);
-    return;
-  }
-  latestTrackerByChat.set(chatId, value);
-  if (!selectedChatKnown) selectChat(chatId);
-  else if (selectedChatId === chatId) publishSelectedTracker();
-}
+const {
+  readLastSimStats,
+  writeLastSimStats,
+  publishSelectedTracker,
+  selectChat,
+  recordChatTracker,
+  forgetChatTracker,
+  rehydrateChatTrackerHistory,
+  isSelectedChatKnown,
+  readSelectedChatId,
+  readActiveChatId,
+  setActiveChatId,
+} = createTrackerSession({
+  recordHistoryTracker,
+  forgetHistoryTracker,
+  getChatTrackerHistory,
+  rehydrateHistory,
+  publishMacroValue: (value) => spindle.updateMacroValue("last_sim_stats", value),
+});
 const { handleSlashCommand } = createCommandEngine({
   readConfig: () => config,
   readLastSimStats,
@@ -259,7 +224,7 @@ registerMessageEvents({
   spindle,
   readConfig: () => config,
   readActiveUserId: () => activeUserId,
-  setActiveChatId: (value) => { activeChatId = value; },
+  setActiveChatId,
   ensureConfigForUser,
   rehydrateChatTrackerHistory,
   handleSlashCommand,
@@ -293,9 +258,9 @@ registerChatLifecycleEvents({
   spindle,
   readConfig: () => config,
   ensureConfigForUser,
-  isSelectedChatKnown: () => selectedChatKnown,
+  isSelectedChatKnown,
   selectChat,
-  setActiveChatId: (value) => { activeChatId = value; },
+  setActiveChatId,
   rehydrateChatTrackerHistory,
   getChatTrackerHistory,
   readFirstMessageFertilityHint: () => firstMessageFertilityHint,
@@ -311,7 +276,7 @@ registerChatLifecycleEvents({
 const { tryRegisterInterceptor } = createPromptInterceptor({
   spindle,
   readConfig: () => config,
-  readActiveChatId: () => activeChatId,
+  readActiveChatId,
   hasPermission,
   trackerMessageCodec,
   rehydrateChatTrackerHistory,
@@ -420,9 +385,9 @@ spindle.onFrontendMessage(createFrontendMessageHandler({
   readConfig: () => config,
   writeConfig: (value) => { config = value; },
   setActiveUserId: (value) => { activeUserId = value; },
-  setActiveChatId: (value) => { activeChatId = value; },
-  isSelectedChatKnown: () => selectedChatKnown,
-  readSelectedChatId: () => selectedChatId,
+  setActiveChatId,
+  isSelectedChatKnown,
+  readSelectedChatId,
   selectChat,
   loadConfig,
   ensureConfigForUser,

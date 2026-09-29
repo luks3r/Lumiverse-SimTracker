@@ -72,14 +72,14 @@ return async (payload: unknown, userId: string) => {
     return;
   }
   if (message.type === "set_config") {
-    if (!readWireRecord(message.config)) {
+    const incoming = readWireRecord(message.config);
+    if (!incoming) {
       sendConfigError(userId, "Invalid settings payload.", "save");
       return;
     }
     try {
       await ensureConfigForUser(userId);
       config = deps.readConfig();
-      const incoming = message.config as Partial<TrackerConfig>;
       const previousTypeSafeKey = config.typeSafeApiKey.trim();
       config = mergeTrackerConfig(config, incoming);
       deps.writeConfig(config);
@@ -235,7 +235,7 @@ return async (payload: unknown, userId: string) => {
     const enabled = typeof message.enabled === "boolean" ? message.enabled : true;
     if (index >= 0 && index < config.inlinePacks.length) {
       const next = config.inlinePacks.slice();
-      next[index] = { ...(next[index] as Record<string, unknown>), enabled };
+      next[index] = { ...readWireRecord(next[index]), enabled };
       config = { ...config, inlinePacks: next };
       deps.writeConfig(config);
       await saveConfig(userId);

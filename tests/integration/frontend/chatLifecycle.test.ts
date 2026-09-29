@@ -7,26 +7,13 @@ import type { InlineProcessor } from "../../../src/frontend/inlineTemplates";
 describe("frontend chat lifecycle", () => {
   test("switching chats clears the old render and ignores late events from that chat", () => {
     const handlers = new Map<string, (payload: unknown) => void>();
-    const removedMounts: Element[] = [];
     const requestedChats: string[] = [];
     const renderedMessages: string[] = [];
-    const oldMount = {} as Element;
     let inlineDestroyCount = 0;
-    let generatingClears = 0;
-    let sideClears = 0;
+    let resetCount = 0;
     let activeChatId = "chat-a";
     const state: Parameters<typeof registerChatEvents>[0]["state"] = {
       configReady: false,
-      latestTrackerMessageId: "message-a",
-      previousTrackerData: { characters: [{ name: "Alice" }] },
-      trackerComparisonBaselines: new Map([["message-a", null]]),
-      latestTrackerRaw: "old",
-      latestTrackerSourceContent: "old",
-      latestContent: "old",
-      latestMessageRenderIntent: null,
-      trackerMessageRenders: new Map(),
-      trackerMessageIds: new Set(["message-a"]),
-      trackerMessageMounts: new Map([["message-a", oldMount]]),
       grantedPermissions: [],
       requestedPermissions: [],
       ephemeralPoolStatus: null,
@@ -39,7 +26,7 @@ describe("frontend chat lifecycle", () => {
         },
       },
       getActiveChat: () => ({ chatId: activeChatId }),
-      dom: { uninject: (mount: Element) => { removedMounts.push(mount); } },
+      dom: { uninject: () => {} },
       messages: { getLatestMessageId: () => null },
     } as unknown as SpindleFrontendContext;
     const inlineProcessor: InlineProcessor = {
@@ -67,14 +54,11 @@ describe("frontend chat lifecycle", () => {
       inlineProcessor,
       updateRegenerateButton: () => {},
       renderEmpty: () => {},
+      resetTrackerForChat: () => { resetCount += 1; },
+      clearForSwipe: () => {},
+      forgetMessage: () => {},
       handleContent: (_content, messageId) => { if (messageId) renderedMessages.push(messageId); },
-      clearSideTrackerRender: () => { sideClears += 1; },
-      clearMessageTrackerRender: () => {},
-      retryLatestMessageRenderIntent: () => {},
-      retryGeneratingIndicator: () => {},
-      clearLatestMessageRenderIntent: () => {},
-      hideGeneratingIndicator: () => {},
-      hideAllGeneratingIndicators: () => { generatingClears += 1; },
+      handleMessageRendered: () => {},
       renderCapabilities: () => {},
       updatePermissionGatedControls: () => {},
     });
@@ -86,13 +70,10 @@ describe("frontend chat lifecycle", () => {
 
     expect(hydration.currentChatId()).toBe("chat-b");
     expect(hydration.awaitingChatId()).toBe("chat-b");
-    expect(state.trackerMessageIds.size).toBe(0);
-    expect(removedMounts).toEqual([oldMount]);
+    expect(resetCount).toBe(1);
     expect(requestedChats).toEqual(["chat-b"]);
     expect(renderedMessages).toEqual(["message-b"]);
     expect(inlineDestroyCount).toBe(1);
-    expect(generatingClears).toBe(1);
-    expect(sideClears).toBe(1);
 
     subscriptions.generationUnsub();
     subscriptions.chatSwitchedUnsub();
