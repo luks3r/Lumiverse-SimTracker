@@ -2,6 +2,7 @@ import type { SpindleAPI } from "lumiverse-spindle-types";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { mergeTrackerConfig } from "./backendConfig";
 import { buildTrackerFenceRegex, buildTrackerTagRegex, sanitizeTagName } from "../shared/trackerSyntax";
+import { readWireMessage, readWireRecord } from "../shared/wireMessages";
 
 export function createFrontendMessageHandler(deps: {
   spindle: SpindleAPI;
@@ -50,9 +51,9 @@ export function createFrontendMessageHandler(deps: {
     selectChat,
   } = deps;
 return async (payload: unknown, userId: string) => {
-  if (!payload || typeof payload !== "object") return;
+  const message = readWireMessage(payload);
+  if (!message) return;
   deps.setActiveUserId(userId);
-  const message = payload as Record<string, unknown>;
   let config = deps.readConfig();
 
   if (message.type === "get_config") {
@@ -71,6 +72,10 @@ return async (payload: unknown, userId: string) => {
     return;
   }
   if (message.type === "set_config") {
+    if (!readWireRecord(message.config)) {
+      sendConfigError(userId, "Invalid settings payload.", "save");
+      return;
+    }
     try {
       await ensureConfigForUser(userId);
       config = deps.readConfig();

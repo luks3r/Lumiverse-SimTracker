@@ -13,12 +13,14 @@ let interceptor: ((messages: Array<Record<string, unknown>>, context: unknown) =
 let permissionChanged: ((payload: { permission: string; granted: boolean; allGranted: string[] }) => void) | null = null;
 let storedConfig: FrontendMessage = {};
 let failNextSave = false;
+let failNextLoad = false;
 let enclaveKey = "";
 const enclaveWrites: string[] = [];
+const errors: string[] = [];
 
 const spindle = {
   frontendCapabilities: { declare: () => () => {} },
-  log: { info: () => {}, warn: () => {}, error: () => {} },
+  log: { info: () => {}, warn: () => {}, error: (message: string) => { errors.push(message); } },
   on: (event: string, handler: (payload: unknown, userId?: string) => void) => { handlers.set(event, handler); },
   onFrontendMessage: (handler: (payload: unknown, userId: string) => Promise<void>) => { frontendHandler = handler; },
   registerInterceptor: (handler: typeof interceptor) => { interceptor = handler; },
@@ -32,7 +34,13 @@ const spindle = {
     onDenied: () => {},
   },
   userStorage: {
-    getJson: async (_path: string, options: { fallback: FrontendMessage }) => ({ ...options.fallback, ...storedConfig }),
+    getJson: async (_path: string, options: { fallback: FrontendMessage }) => {
+      if (failNextLoad) {
+        failNextLoad = false;
+        throw new Error("storage temporarily unavailable");
+      }
+      return { ...options.fallback, ...storedConfig };
+    },
     setJson: async (_path: string, value: FrontendMessage) => {
       if (failNextSave) {
         failNextSave = false;
@@ -81,6 +89,38 @@ async function waitForNotification(type: string): Promise<FrontendMessage> {
 }
 
 describe("backend host flows", () => {
+  test("chat-switch settings failures are reported through the host log", async () => {
+    errors.length = 0;
+    failNextLoad = true;
+    handlers.get("CHAT_SWITCHED")?.({ chatId: "failed-load-chat" }, "failed-load-user");
+    for (let attempt = 0; attempt < 20 && !errors.some((message) => message.includes("CHAT_SWITCHED")); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(errors.some((message) => message.includes("CHAT_SWITCHED"))).toBe(true);
+  });
+
+  test("message-event settings failures are reported through the host log", async () => {
+    errors.length = 0;
+    failNextLoad = true;
+    handlers.get("MESSAGE_EDITED")?.({ chatId: "failed-load-chat", messageId: "edited-message", content: "edit" }, "failed-edit-user");
+    for (let attempt = 0; attempt < 20 && !errors.some((message) => message.includes("MESSAGE_EDITED")); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(errors.some((message) => message.includes("MESSAGE_EDITED"))).toBe(true);
+  });
+
+  test("malformed settings messages are not acknowledged as saved", async () => {
+    storedConfig = {};
+    await sendFrontend({ type: "get_config" });
+    const savedBefore = saved.length;
+
+    const result = await sendFrontend({ type: "set_config", config: ["not a settings object"] });
+
+    expect(result.find((message) => message.type === "config_error")).toMatchObject({ operation: "save" });
+    expect(result.some((message) => message.type === "config_saved")).toBe(false);
+    expect(saved.length).toBe(savedBefore);
+  });
+
   test("saved settings normalize on load without restoring a plaintext API key", async () => {
     storedConfig = {
       trackerTagName: " Custom Tag! ",

@@ -14449,6 +14449,15 @@ function mergeTrackerConfig(config, incoming) {
   };
 }
 
+// src/shared/wireMessages.ts
+function readWireRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function readWireMessage(value) {
+  const record = readWireRecord(value);
+  return record && typeof record.type === "string" ? record : null;
+}
+
 // src/backend/frontendMessages.ts
 function createFrontendMessageHandler(deps) {
   const {
@@ -14472,10 +14481,10 @@ function createFrontendMessageHandler(deps) {
     selectChat
   } = deps;
   return async (payload, userId) => {
-    if (!payload || typeof payload !== "object")
+    const message = readWireMessage(payload);
+    if (!message)
       return;
     deps.setActiveUserId(userId);
-    const message = payload;
     let config = deps.readConfig();
     if (message.type === "get_config") {
       try {
@@ -14490,6 +14499,10 @@ function createFrontendMessageHandler(deps) {
       return;
     }
     if (message.type === "set_config") {
+      if (!readWireRecord(message.config)) {
+        sendConfigError(userId, "Invalid settings payload.", "save");
+        return;
+      }
       try {
         await ensureConfigForUser(userId);
         config = deps.readConfig();
@@ -15135,6 +15148,13 @@ function readMessageContext(payload) {
   };
 }
 
+// src/backend/hostEventTask.ts
+function runHostEventTask(spindle2, eventName, task) {
+  task().catch((error) => {
+    spindle2.log.error(`${eventName} handler failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 // src/backend/messageEvents.ts
 function registerMessageEvents(deps) {
   const {
@@ -15149,7 +15169,7 @@ function registerMessageEvents(deps) {
     trackEvent
   } = deps;
   spindle2.on("MESSAGE_SENT", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "MESSAGE_SENT", async () => {
       await ensureConfigForUser(userId);
       const ctx = readMessageContext(payload);
       const message = ctx.content;
@@ -15157,7 +15177,7 @@ function registerMessageEvents(deps) {
         return;
       if (ctx.chatId) {
         deps.setActiveChatId(ctx.chatId);
-        rehydrateChatTrackerHistory(ctx.chatId);
+        runHostEventTask(spindle2, "MESSAGE_SENT rehydrate", () => rehydrateChatTrackerHistory(ctx.chatId));
       }
       const commandResult = await handleSlashCommand(message, ctx);
       if (commandResult) {
@@ -15174,10 +15194,10 @@ function registerMessageEvents(deps) {
         pushMacroValues();
         await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
       }
-    })();
+    });
   });
   spindle2.on("MESSAGE_EDITED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "MESSAGE_EDITED", async () => {
       await ensureConfigForUser(userId);
       const ctx = readMessageContext(payload);
       if (ctx.chatId)
@@ -15192,10 +15212,10 @@ function registerMessageEvents(deps) {
         return;
       }
       forgetChatTracker(ctx.chatId, ctx.messageId);
-    })();
+    });
   });
   spindle2.on("MESSAGE_SWIPED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "MESSAGE_SWIPED", async () => {
       await ensureConfigForUser(userId);
       if (!payload || typeof payload !== "object")
         return;
@@ -15220,10 +15240,10 @@ function registerMessageEvents(deps) {
         forgetChatTracker(chatId, messageId);
       }
       await trackEvent("sst.swipe.synced", { action, swipeId: typeof obj.swipeId === "number" ? obj.swipeId : null }, { chatId });
-    })();
+    });
   });
   spindle2.on("MESSAGE_TAG_INTERCEPTED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "MESSAGE_TAG_INTERCEPTED", async () => {
       await ensureConfigForUser(userId);
       if (!payload || typeof payload !== "object")
         return;
@@ -15248,7 +15268,7 @@ function registerMessageEvents(deps) {
       recordChatTracker(chatId, messageId, content);
       pushMacroValues();
       await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier, source: "message_tag_intercepted" });
-    })();
+    });
   });
 }
 
@@ -15311,7 +15331,7 @@ function registerChatLifecycleEvents(deps) {
     enqueueSecondaryGeneration
   } = deps;
   spindle2.on("GENERATION_STARTED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "GENERATION_STARTED", async () => {
       await ensureConfigForUser(userId);
       if (!payload || typeof payload !== "object")
         return;
@@ -15336,38 +15356,38 @@ function registerChatLifecycleEvents(deps) {
       } catch {}
       if (previousHint !== deps.readFirstMessageFertilityHint())
         pushMacroValues();
-    })();
+    });
   });
   spindle2.on("CHAT_SWITCHED", (payload, userId) => {
     const obj = payload && typeof payload === "object" ? payload : {};
     const chatId = typeof obj.chatId === "string" ? obj.chatId : typeof obj.chat_id === "string" ? obj.chat_id : null;
     selectChat(chatId);
-    (async () => {
+    runHostEventTask(spindle2, "CHAT_SWITCHED", async () => {
       await ensureConfigForUser(userId);
       if (chatId)
         deps.setActiveChatId(chatId);
       if (chatId) {
         await rehydrateChatTrackerHistory(chatId);
       }
-    })();
+    });
   });
   spindle2.on("MESSAGE_DELETED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "MESSAGE_DELETED", async () => {
       await ensureConfigForUser(userId);
       const ctx = readMessageContext(payload);
       if (!ctx.chatId || !ctx.messageId)
         return;
       forgetChatTracker(ctx.chatId, ctx.messageId);
       spindle2.log.info(`Forgot tracker side-channel entry for deleted message ${ctx.messageId} in chat ${ctx.chatId}`);
-    })();
+    });
   });
   spindle2.on("GENERATION_ENDED", (payload, userId) => {
-    (async () => {
+    runHostEventTask(spindle2, "GENERATION_ENDED", async () => {
       await ensureConfigForUser(userId);
       const ctx = readMessageContext(payload);
       if (ctx.chatId) {
         deps.setActiveChatId(ctx.chatId);
-        rehydrateChatTrackerHistory(ctx.chatId);
+        runHostEventTask(spindle2, "GENERATION_ENDED rehydrate", () => rehydrateChatTrackerHistory(ctx.chatId));
       }
       if (!deps.readConfig().useSecondaryLLM)
         return;
@@ -15390,7 +15410,7 @@ function registerChatLifecycleEvents(deps) {
         return;
       }
       enqueueSecondaryGeneration(ctx.chatId, latestAssistant.id);
-    })();
+    });
   });
 }
 

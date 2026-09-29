@@ -15,27 +15,25 @@ import { createInlineTemplateProcessor } from "./inlineTemplates";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { createFrontendMessageSyntax } from "./frontendMessageSyntax";
 
-const panelHost = createPanelHost();
-const {
-  byId,
-  getPresetById,
-  isImportedTemplate,
-  setStatus,
-  shouldResetStatusAfterConfigLoad,
-  renderCapabilities,
-  renderEmpty,
-  applyThemeClass,
-  renderTracker,
-  showCommandResult,
-  mountTemplateOptions,
-  downloadJson,
-} = panelHost;
-
-let configTrackerTagNameHint = "tracker";
-const { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
-
-
 export function setup(ctx: SpindleFrontendContext) {
+  const panelHost = createPanelHost();
+  const {
+    byId,
+    getPresetById,
+    isImportedTemplate,
+    setStatus,
+    shouldResetStatusAfterConfigLoad,
+    renderCapabilities,
+    renderEmpty,
+    applyThemeClass,
+    renderTracker,
+    showCommandResult,
+    mountTemplateOptions,
+    downloadJson,
+  } = panelHost;
+  let configTrackerTagNameHint = "tracker";
+  const { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
+
   // Lumiverse 1.0.6+ can explicitly release queued startup events once the
   // frontend has registered its handlers and issued its initial requests.
   const readyGate = createReadyGate(ctx);

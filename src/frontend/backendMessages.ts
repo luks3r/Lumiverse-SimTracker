@@ -6,6 +6,7 @@ import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { CONFIG_ERROR_STATUS_PREFIX, DEFAULT_PANEL_STATUS } from "./frontendPanel";
 import type { ConnectionProfile } from "./frontendControls";
 import type { PendingTrackerPayload } from "./trackerRendering";
+import { readWireMessage } from "../shared/wireMessages";
 
 export function registerBackendMessages(deps: {
   ctx: SpindleFrontendContext;
@@ -63,7 +64,8 @@ export function registerBackendMessages(deps: {
     handleTrackerPayload, shouldResetStatusAfterConfigLoad, inlineProcessor,
   } = deps;
   const backendUnsub = ctx.onBackendMessage((payload: unknown) => {
-    const obj = payload as Record<string, unknown>;
+    const obj = readWireMessage(payload);
+    if (!obj) return;
     if (obj?.type === "tag_interceptor_config") {
       state.config = {
         ...state.config,

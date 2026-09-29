@@ -20130,6 +20130,15 @@ function sanitizeTagName(value) {
   return trimmed.replace(/[^a-z0-9_-]/g, "") || DEFAULT_CONFIG.trackerTagName;
 }
 
+// src/shared/wireMessages.ts
+function readWireRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function readWireMessage(value) {
+  const record = readWireRecord(value);
+  return record && typeof record.type === "string" ? record : null;
+}
+
 // src/frontend/backendMessages.ts
 function registerBackendMessages(deps) {
   const {
@@ -20160,7 +20169,9 @@ function registerBackendMessages(deps) {
     inlineProcessor
   } = deps;
   const backendUnsub = ctx.onBackendMessage((payload) => {
-    const obj = payload;
+    const obj = readWireMessage(payload);
+    if (!obj)
+      return;
     if (obj?.type === "tag_interceptor_config") {
       state.config = {
         ...state.config,
@@ -21217,24 +21228,24 @@ function createInlineTemplateProcessor(deps) {
 }
 
 // src/frontend/index.ts
-var panelHost = createPanelHost();
-var {
-  byId,
-  getPresetById,
-  isImportedTemplate,
-  setStatus,
-  shouldResetStatusAfterConfigLoad,
-  renderCapabilities,
-  renderEmpty,
-  applyThemeClass,
-  renderTracker,
-  showCommandResult,
-  mountTemplateOptions,
-  downloadJson
-} = panelHost;
-var configTrackerTagNameHint = "tracker";
-var { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
 function setup(ctx) {
+  const panelHost = createPanelHost();
+  const {
+    byId,
+    getPresetById,
+    isImportedTemplate,
+    setStatus,
+    shouldResetStatusAfterConfigLoad,
+    renderCapabilities,
+    renderEmpty,
+    applyThemeClass,
+    renderTracker,
+    showCommandResult,
+    mountTemplateOptions,
+    downloadJson
+  } = panelHost;
+  let configTrackerTagNameHint = "tracker";
+  const { extractTrackerBlock } = createFrontendMessageSyntax(() => configTrackerTagNameHint);
   const readyGate = createReadyGate(ctx);
   registerTemplateHelpers();
   ctx.dom.cleanup();

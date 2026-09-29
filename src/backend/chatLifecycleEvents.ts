@@ -2,6 +2,7 @@ import type { SpindleAPI } from "lumiverse-spindle-types";
 import type { TrackerConfig } from "../shared/trackerConfig";
 import { buildFirstMessageHint } from "../shared/fertilityCycleHint";
 import { readMessageContext } from "./backendMessageContext";
+import { runHostEventTask } from "./hostEventTask";
 
 export function registerChatLifecycleEvents(deps: {
   spindle: SpindleAPI;
@@ -41,7 +42,7 @@ export function registerChatLifecycleEvents(deps: {
 // this as the trigger to prime the side-channel for chats the extension
 // hasn't observed activity on yet (e.g. first generation after reload).
 spindle.on("GENERATION_STARTED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "GENERATION_STARTED", async () => {
     await ensureConfigForUser(userId);
     if (!payload || typeof payload !== "object") return;
     const obj = payload as Record<string, unknown>;
@@ -69,7 +70,7 @@ spindle.on("GENERATION_STARTED", (payload: unknown, userId?: string) => {
       // If message introspection fails, leave the hint empty.
     }
     if (previousHint !== deps.readFirstMessageFertilityHint()) pushMacroValues();
-  })();
+  });
 });
 
 spindle.on("CHAT_SWITCHED", (payload: unknown, userId?: string) => {
@@ -80,13 +81,13 @@ spindle.on("CHAT_SWITCHED", (payload: unknown, userId?: string) => {
       ? obj.chat_id
       : null;
   selectChat(chatId);
-  void (async () => {
+  runHostEventTask(spindle, "CHAT_SWITCHED", async () => {
     await ensureConfigForUser(userId);
     if (chatId) deps.setActiveChatId(chatId);
     if (chatId) {
       await rehydrateChatTrackerHistory(chatId);
     }
-  })();
+  });
 });
 
 // When a message disappears, evict its side-channel entry. Without this,
@@ -94,22 +95,22 @@ spindle.on("CHAT_SWITCHED", (payload: unknown, userId?: string) => {
 // tracker as "previous state" on a future regenerate, and the side panel
 // could keep pointing at a row the user removed.
 spindle.on("MESSAGE_DELETED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "MESSAGE_DELETED", async () => {
     await ensureConfigForUser(userId);
     const ctx = readMessageContext(payload);
     if (!ctx.chatId || !ctx.messageId) return;
     forgetChatTracker(ctx.chatId, ctx.messageId);
     spindle.log.info(`Forgot tracker side-channel entry for deleted message ${ctx.messageId} in chat ${ctx.chatId}`);
-  })();
+  });
 });
 
 spindle.on("GENERATION_ENDED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "GENERATION_ENDED", async () => {
     await ensureConfigForUser(userId);
     const ctx = readMessageContext(payload);
     if (ctx.chatId) {
       deps.setActiveChatId(ctx.chatId);
-      void rehydrateChatTrackerHistory(ctx.chatId);
+      runHostEventTask(spindle, "GENERATION_ENDED rehydrate", () => rehydrateChatTrackerHistory(ctx.chatId));
     }
 
     if (!deps.readConfig().useSecondaryLLM) return;
@@ -140,6 +141,6 @@ spindle.on("GENERATION_ENDED", (payload: unknown, userId?: string) => {
     // is still in flight, which is what caused "last message sometimes has
     // no tracker" when users replied faster than the sidecar completed.
     void enqueueSecondaryGeneration(ctx.chatId, latestAssistant.id);
-  })();
+  });
 });
 }

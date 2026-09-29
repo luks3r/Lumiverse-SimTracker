@@ -3,6 +3,7 @@ import type { TrackerConfig } from "../shared/trackerConfig";
 import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { readMessageContext } from "./backendMessageContext";
 import type { createCommandEngine } from "./commandEngine";
+import { runHostEventTask } from "./hostEventTask";
 
 export function registerMessageEvents(deps: {
   spindle: SpindleAPI;
@@ -30,7 +31,7 @@ export function registerMessageEvents(deps: {
     trackEvent,
   } = deps;
 spindle.on("MESSAGE_SENT", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "MESSAGE_SENT", async () => {
     await ensureConfigForUser(userId);
     const ctx = readMessageContext(payload);
     const message = ctx.content;
@@ -38,7 +39,7 @@ spindle.on("MESSAGE_SENT", (payload: unknown, userId?: string) => {
 
     if (ctx.chatId) {
       deps.setActiveChatId(ctx.chatId);
-      void rehydrateChatTrackerHistory(ctx.chatId);
+      runHostEventTask(spindle, "MESSAGE_SENT rehydrate", () => rehydrateChatTrackerHistory(ctx.chatId));
     }
 
     const commandResult = await handleSlashCommand(message, ctx);
@@ -61,11 +62,11 @@ spindle.on("MESSAGE_SENT", (payload: unknown, userId?: string) => {
       pushMacroValues();
       await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier }, ctx.chatId ? { chatId: ctx.chatId } : undefined);
     }
-  })();
+  });
 });
 
 spindle.on("MESSAGE_EDITED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "MESSAGE_EDITED", async () => {
     await ensureConfigForUser(userId);
     const ctx = readMessageContext(payload);
     if (ctx.chatId) deps.setActiveChatId(ctx.chatId);
@@ -80,11 +81,11 @@ spindle.on("MESSAGE_EDITED", (payload: unknown, userId?: string) => {
     // Edit removed the tracker (e.g. swipe to a variant without one) — drop
     // the side-channel entry so stale data doesn't leak into generation.
     forgetChatTracker(ctx.chatId, ctx.messageId);
-  })();
+  });
 });
 
 spindle.on("MESSAGE_SWIPED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "MESSAGE_SWIPED", async () => {
     await ensureConfigForUser(userId);
     if (!payload || typeof payload !== "object") return;
     const obj = payload as Record<string, unknown>;
@@ -143,11 +144,11 @@ spindle.on("MESSAGE_SWIPED", (payload: unknown, userId?: string) => {
       { action, swipeId: typeof obj.swipeId === "number" ? obj.swipeId : null },
       { chatId },
     );
-  })();
+  });
 });
 
 spindle.on("MESSAGE_TAG_INTERCEPTED", (payload: unknown, userId?: string) => {
-  void (async () => {
+  runHostEventTask(spindle, "MESSAGE_TAG_INTERCEPTED", async () => {
     await ensureConfigForUser(userId);
     if (!payload || typeof payload !== "object") return;
     const obj = payload as Record<string, unknown>;
@@ -175,6 +176,6 @@ spindle.on("MESSAGE_TAG_INTERCEPTED", (payload: unknown, userId?: string) => {
     recordChatTracker(chatId, messageId, content);
     pushMacroValues();
     await trackEvent("sst.tracker.detected", { identifier: deps.readConfig().codeBlockIdentifier, source: "message_tag_intercepted" });
-  })();
+  });
 });
 }
