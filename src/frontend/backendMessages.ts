@@ -19,10 +19,6 @@ export function registerBackendMessages(deps: {
     ephemeralPoolStatus: Record<string, unknown> | null;
     configReady: boolean;
     configRetryTimer: ReturnType<typeof setTimeout> | null;
-    latestContent: string | null;
-    latestTrackerMessageId: string | null;
-    latestTrackerRaw: string | null;
-    latestTrackerSourceContent: string | null;
   };
   hydration: TrackerHydration;
   panelHost: { setSeededPresets: (presets: TemplatePreset[]) => void };
@@ -37,12 +33,12 @@ export function registerBackendMessages(deps: {
   showGeneratingIndicator: (messageId: string) => void;
   hideGeneratingIndicator: (messageId: string) => void;
   handleContent: (content: string, messageId: string | null) => void;
+  reapplyLatest: () => void;
   renderCapabilities: (granted: string[], requested: string[], ephemeral: Record<string, unknown> | null) => void;
   updatePermissionGatedControls: () => void;
   syncControls: () => void;
   applyThemeClass: (preset: TemplatePreset) => void;
   getPresetById: (config: TrackerConfig, id: string) => TemplatePreset;
-  handleTrackerPayload: (raw: string, sourceContent: string, messageId: string | null) => void;
   shouldResetStatusAfterConfigLoad: () => boolean;
   inlineProcessor: { processAll: () => void };
 }) {
@@ -51,9 +47,9 @@ export function registerBackendMessages(deps: {
     hydration, showCommandResult, setStatus,
     isImportedTemplate, populateConnectionDropdown, setLLMStatus,
     isActivityForActiveChat, showGeneratingIndicator, hideGeneratingIndicator,
-    handleContent, renderCapabilities,
+    handleContent, reapplyLatest, renderCapabilities,
     updatePermissionGatedControls, syncControls, applyThemeClass, getPresetById,
-    handleTrackerPayload, shouldResetStatusAfterConfigLoad, inlineProcessor,
+    shouldResetStatusAfterConfigLoad, inlineProcessor,
   } = deps;
   const backendUnsub = ctx.onBackendMessage((payload: unknown) => {
     const obj = readWireMessage(payload);
@@ -207,6 +203,7 @@ export function registerBackendMessages(deps: {
       secondaryLLMMessageCount: typeof incoming.secondaryLLMMessageCount === "number" ? incoming.secondaryLLMMessageCount : DEFAULT_CONFIG.secondaryLLMMessageCount,
       secondaryLLMTemperature: typeof incoming.secondaryLLMTemperature === "number" ? incoming.secondaryLLMTemperature : DEFAULT_CONFIG.secondaryLLMTemperature,
       secondaryLLMStripHTML: typeof incoming.secondaryLLMStripHTML === "boolean" ? incoming.secondaryLLMStripHTML : DEFAULT_CONFIG.secondaryLLMStripHTML,
+      secondaryLLMJsonResponseFormat: typeof incoming.secondaryLLMJsonResponseFormat === "boolean" ? incoming.secondaryLLMJsonResponseFormat : DEFAULT_CONFIG.secondaryLLMJsonResponseFormat,
       fertilityCycleBias:
         typeof incoming.fertilityCycleBias === "string" && (FERTILITY_CYCLE_BIAS_VALUES as readonly string[]).includes(incoming.fertilityCycleBias)
           ? (incoming.fertilityCycleBias as FertilityCycleBias)
@@ -234,11 +231,7 @@ export function registerBackendMessages(deps: {
     applyThemeClass(getPresetById(state.config, state.config.templateId));
     renderCapabilities(state.grantedPermissions, state.requestedPermissions, state.ephemeralPoolStatus);
     updatePermissionGatedControls();
-    if (state.latestContent) {
-      handleContent(state.latestContent, state.latestTrackerMessageId);
-    } else if (state.latestTrackerRaw) {
-      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
-    }
+    reapplyLatest();
     if (shouldResetStatusAfterConfigLoad()) {
       setStatus(DEFAULT_PANEL_STATUS);
     }

@@ -12,18 +12,14 @@ export function registerSettingsActions(deps: {
   state: {
     config: TrackerConfig;
     configTrackerTagNameHint: string;
-    latestContent: string | null;
-    latestTrackerMessageId: string | null;
-    latestTrackerRaw: string | null;
-    latestTrackerSourceContent: string | null;
     modelCombobox: SpindleModelComboboxHandle | null;
   };
   readCurrentChatId: () => string | null;
   getPresetById: (config: TrackerConfig, id: string) => TemplatePreset;
   isImportedTemplate: (config: TrackerConfig, id: string) => boolean;
   applyThemeClass: (preset: TemplatePreset) => void;
-  handleContent: (content: string, messageId: string | null) => void;
-  handleTrackerPayload: (raw: string, sourceContent: string, messageId: string | null) => void;
+  reapplyLatest: () => void;
+  readLatestTrackerMessageId: () => string | null;
   inlineProcessor: ReturnType<typeof createInlineTemplateProcessor>;
   setStatus: (text: string) => void;
   persistConfig: () => void;
@@ -35,7 +31,7 @@ export function registerSettingsActions(deps: {
 }) {
   const {
     ctx, byId, state, getPresetById, isImportedTemplate, applyThemeClass,
-    handleContent, handleTrackerPayload, inlineProcessor, setStatus,
+    reapplyLatest, inlineProcessor, setStatus,
     persistConfig, applyTagInterceptor, downloadJson, ensureModelCombobox,
     buildConnectionRef, setLLMStatus,
   } = deps;
@@ -51,11 +47,7 @@ export function registerSettingsActions(deps: {
     if (identifierInput && preset.extSettings?.codeBlockIdentifier) {
       identifierInput.value = String(preset.extSettings.codeBlockIdentifier);
     }
-    if (state.latestContent) {
-      handleContent(state.latestContent, state.latestTrackerMessageId);
-    } else if (state.latestTrackerRaw) {
-      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
-    }
+    reapplyLatest();
     inlineProcessor.processAll();
     setStatus(`Previewing template: ${preset.templateName}. Click Save Settings to keep it.`);
   });
@@ -79,6 +71,7 @@ export function registerSettingsActions(deps: {
     const llmMsgCount = byId<HTMLInputElement>("sst-lumi-llm-msgcount");
     const llmTemp = byId<HTMLInputElement>("sst-lumi-llm-temp");
     const llmStrip = byId<HTMLInputElement>("sst-lumi-llm-strip");
+    const llmJsonResponseFormat = byId<HTMLInputElement>("sst-lumi-llm-json-format");
     const tsEnable = byId<HTMLInputElement>("sst-lumi-ts-enable");
     const tsKey = byId<HTMLInputElement>("sst-lumi-ts-key");
     const tsModel = byId<HTMLInputElement>("sst-lumi-ts-model");
@@ -101,6 +94,7 @@ export function registerSettingsActions(deps: {
       llmMsgCount: llmMsgCount?.value,
       llmTemp: llmTemp?.value,
       llmStrip: llmStrip?.checked,
+      llmJsonResponseFormat: llmJsonResponseFormat?.checked,
       cycleBias: cycleBiasSelect?.value,
       tsEnable: tsEnable?.checked,
       tsKey: tsKey?.value,
@@ -115,6 +109,12 @@ export function registerSettingsActions(deps: {
     applyTagInterceptor();
     inlineProcessor.processAll();
     setStatus("Saving settings...");
+  });
+
+  const formatSelect = byId<HTMLSelectElement>("sst-lumi-format");
+  formatSelect?.addEventListener("change", () => {
+    const jsonFormat = byId<HTMLInputElement>("sst-lumi-llm-json-format");
+    if (jsonFormat) jsonFormat.disabled = formatSelect.value !== "json";
   });
 
   const exportButton = byId<HTMLElement>("sst-lumi-export");
@@ -190,7 +190,7 @@ export function registerSettingsActions(deps: {
       // Hint the message we last rendered a tracker for, if any. Backend
       // falls back to the latest assistant message when this is absent
       // or stale, so a missing hint is fine.
-      messageId: state.latestTrackerMessageId ?? undefined,
+      messageId: deps.readLatestTrackerMessageId() ?? undefined,
     } satisfies FrontendToBackendMessage);
   });
 }

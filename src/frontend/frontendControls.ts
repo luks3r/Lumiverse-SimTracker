@@ -212,10 +212,15 @@ export function createFrontendControls(deps: {
     const llmMsgCount = byId<HTMLInputElement>("sst-lumi-llm-msgcount");
     const llmTemp = byId<HTMLInputElement>("sst-lumi-llm-temp");
     const llmStrip = byId<HTMLInputElement>("sst-lumi-llm-strip");
+    const llmJsonResponseFormat = byId<HTMLInputElement>("sst-lumi-llm-json-format");
     if (llmEnable) llmEnable.checked = deps.readConfig().useSecondaryLLM;
     if (llmMsgCount) llmMsgCount.value = String(deps.readConfig().secondaryLLMMessageCount);
     if (llmTemp) llmTemp.value = String(deps.readConfig().secondaryLLMTemperature);
     if (llmStrip) llmStrip.checked = deps.readConfig().secondaryLLMStripHTML;
+    if (llmJsonResponseFormat) {
+      llmJsonResponseFormat.checked = deps.readConfig().trackerFormat === "json" && deps.readConfig().secondaryLLMJsonResponseFormat;
+      llmJsonResponseFormat.disabled = deps.readConfig().trackerFormat !== "json";
+    }
     const tsEnable = byId<HTMLInputElement>("sst-lumi-ts-enable");
     const tsKey = byId<HTMLInputElement>("sst-lumi-ts-key");
     const tsModel = byId<HTMLInputElement>("sst-lumi-ts-model");

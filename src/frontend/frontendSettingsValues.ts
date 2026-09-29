@@ -15,6 +15,7 @@ export type FrontendSettingsValues = {
   llmMsgCount?: string;
   llmTemp?: string;
   llmStrip?: boolean;
+  llmJsonResponseFormat?: boolean;
   cycleBias?: string;
   tsEnable?: boolean;
   tsKey?: string;
@@ -59,6 +60,7 @@ export function buildSavedFrontendConfig(
     secondaryLLMMessageCount: Math.max(1, Math.min(50, Math.floor(Number(values.llmMsgCount) || 5))),
     secondaryLLMTemperature: Math.max(0, Math.min(2, Number(values.llmTemp) || 0.7)),
     secondaryLLMStripHTML: Boolean(values.llmStrip),
+    secondaryLLMJsonResponseFormat: values.format === "json" && Boolean(values.llmJsonResponseFormat),
     fertilityCycleBias: (FERTILITY_CYCLE_BIAS_VALUES as readonly string[]).includes(values.cycleBias || "")
       ? (values.cycleBias as FertilityCycleBias)
       : DEFAULT_CONFIG.fertilityCycleBias,

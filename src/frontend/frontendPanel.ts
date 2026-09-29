@@ -55,6 +55,7 @@ export const PANEL_HTML = `
         </label>
         <label>Context Messages<input id="sst-lumi-llm-msgcount" type="number" min="1" max="50" value="5" /></label>
         <label>Temperature<input id="sst-lumi-llm-temp" type="number" min="0" max="2" step="0.1" value="0.7" /></label>
+        <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-json-format" type="checkbox" />Request JSON output format (JSON trackers only; provider must support it)</label>
         <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-strip" type="checkbox" checked />Strip structural HTML from context</label>
         <button id="sst-lumi-llm-regenerate" type="button" class="sst-lumi-llm-regenerate" disabled>Regenerate Last Tracker</button>
         <div id="sst-lumi-llm-status" class="sst-lumi-llm-status"></div>

@@ -18,6 +18,7 @@ describe("frontend settings values", () => {
       llmMsgCount: "99",
       llmTemp: "0",
       llmStrip: true,
+      llmJsonResponseFormat: true,
       cycleBias: "ovulating",
       tsEnable: true,
       tsKey: "  secret  ",
@@ -32,8 +33,15 @@ describe("frontend settings values", () => {
       trackerFormat: "yaml", retainTrackerCount: 20,
       useSecondaryLLM: true, secondaryLLMConnectionId: "connection-1", secondaryLLMModel: "",
       secondaryLLMMessageCount: 50, secondaryLLMTemperature: 0.7,
+      secondaryLLMJsonResponseFormat: false,
       fertilityCycleBias: "ovulating", typeSafeApiKey: "secret",
       typeSafeModel: DEFAULT_CONFIG.typeSafeModel, typeSafeConfidenceFloor: 0.3,
     });
+  });
+
+  test("JSON response format is saved only for JSON trackers", () => {
+    const config = buildSavedFrontendConfig(DEFAULT_CONFIG, { format: "json", llmJsonResponseFormat: true }, "sim");
+
+    expect(config.secondaryLLMJsonResponseFormat).toBe(true);
   });
 });

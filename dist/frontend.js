@@ -5430,6 +5430,67 @@ var require_handlebars = __commonJS(function(exports, module) {
   module.exports = exports["default"];
 });
 
+// src/frontend/frontendReadyGate.ts
+var READY_MIN_VERSION = [1, 0, 6];
+function parseVersionSegment(segment) {
+  if (!segment)
+    return 0;
+  const match = segment.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+function isVersionAtLeast(version, minimum) {
+  const parts = version.split(".");
+  for (let index = 0;index < minimum.length; index += 1) {
+    const current = parseVersionSegment(parts[index]);
+    const required = minimum[index];
+    if (current > required)
+      return true;
+    if (current < required)
+      return false;
+  }
+  return true;
+}
+async function shouldBroadcastReadyForHost() {
+  try {
+    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
+    if (!response.ok)
+      return true;
+    const payload = await response.json();
+    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
+    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
+  } catch {
+    return true;
+  }
+}
+function createReadyGate(ctx) {
+  const readyContext = ctx;
+  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
+    return {
+      dispose() {},
+      release() {}
+    };
+  }
+  readyContext.deferReady();
+  const shouldBroadcastReady = shouldBroadcastReadyForHost();
+  let disposed = false;
+  let released = false;
+  return {
+    dispose() {
+      disposed = true;
+    },
+    release() {
+      if (disposed || released)
+        return;
+      released = true;
+      shouldBroadcastReady.then((allowed) => {
+        if (!disposed && allowed) {
+          readyContext.ready?.();
+        }
+      });
+    }
+  };
+}
+
 // node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = Symbol.for("yaml.alias");
 var DOC = Symbol.for("yaml.document");
@@ -11571,67 +11632,6 @@ function normalizeTrackerData(data) {
   };
 }
 
-// src/frontend/frontendReadyGate.ts
-var READY_MIN_VERSION = [1, 0, 6];
-function parseVersionSegment(segment) {
-  if (!segment)
-    return 0;
-  const match = segment.match(/\d+/);
-  return match ? Number(match[0]) : 0;
-}
-function isVersionAtLeast(version, minimum) {
-  const parts = version.split(".");
-  for (let index = 0;index < minimum.length; index += 1) {
-    const current = parseVersionSegment(parts[index]);
-    const required = minimum[index];
-    if (current > required)
-      return true;
-    if (current < required)
-      return false;
-  }
-  return true;
-}
-async function shouldBroadcastReadyForHost() {
-  try {
-    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
-    if (!response.ok)
-      return true;
-    const payload = await response.json();
-    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
-    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
-  } catch {
-    return true;
-  }
-}
-function createReadyGate(ctx) {
-  const readyContext = ctx;
-  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
-    return {
-      dispose() {},
-      release() {}
-    };
-  }
-  readyContext.deferReady();
-  const shouldBroadcastReady = shouldBroadcastReadyForHost();
-  let disposed = false;
-  let released = false;
-  return {
-    dispose() {
-      disposed = true;
-    },
-    release() {
-      if (disposed || released)
-        return;
-      released = true;
-      shouldBroadcastReady.then((allowed) => {
-        if (!disposed && allowed) {
-          readyContext.ready?.();
-        }
-      });
-    }
-  };
-}
-
 // src/frontend/frontendTemplate.ts
 var import_handlebars = __toESM(require_handlebars(), 1);
 var TEMPLATE_CACHE = new Map;
@@ -12395,12 +12395,31 @@ function rawJson(data) {
   }
 }
 
+// src/frontend/trackerRenderState.ts
+function createTrackerRenderState() {
+  return {
+    previousTrackerData: null,
+    latestContent: null,
+    latestTrackerMessageId: null,
+    latestTrackerRaw: null,
+    latestTrackerSourceContent: null,
+    trackerMessageIds: new Set,
+    trackerMessageMounts: new Map,
+    trackerMessageRenders: new Map,
+    trackerComparisonBaselines: new Map,
+    trackerGeneratingIndicators: new Map,
+    latestMessageRenderIntent: null,
+    pendingGeneratingIndicatorMessageId: null,
+    sideTrackerMount: null,
+    sideAppMount: null
+  };
+}
+
 // src/frontend/trackerRendering.ts
 function createTrackerRendering(deps) {
   const {
     ctx,
     byId,
-    state,
     getPresetById,
     extractTrackerBlock,
     setStatus,
@@ -12410,6 +12429,7 @@ function createTrackerRendering(deps) {
     updateRegenerateButton,
     hasPermission
   } = deps;
+  const state = createTrackerRenderState();
   const injectIntoPanelBody = (html) => {
     const panelBody = byId("sst-lumi-body");
     if (!panelBody || !panelBody.isConnected)
@@ -12790,43 +12810,31 @@ function createTrackerRendering(deps) {
     if (needsLatestAttach && content)
       handleContent(content, messageId);
   };
+  const reapplyLatest = () => {
+    if (state.latestContent) {
+      handleContent(state.latestContent, state.latestTrackerMessageId);
+    } else if (state.latestTrackerRaw) {
+      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
+    }
+  };
+  const setComparisonBaseline = (messageId, previousPayload) => {
+    state.trackerComparisonBaselines.clear();
+    state.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
+  };
   return {
+    hasRenderedMessage: (messageId) => state.trackerMessageIds.has(messageId),
+    readLatestTrackerMessageId: () => state.latestTrackerMessageId,
+    setComparisonBaseline,
     resetForChat,
     clearForSwipe,
     forgetMessage,
     dispose,
-    clearMessageTrackerRender,
-    pruneNonLatestMessageTrackers,
-    clearLatestMessageRenderIntent,
-    retryLatestMessageRenderIntent,
-    clearSideTrackerRender,
     showGeneratingIndicator,
     hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
-    retryGeneratingIndicator,
     handleTrackerPayload,
     handleContent,
-    handleMessageRendered
-  };
-}
-
-// src/frontend/trackerRenderState.ts
-function createTrackerRenderState() {
-  return {
-    previousTrackerData: null,
-    latestContent: null,
-    latestTrackerMessageId: null,
-    latestTrackerRaw: null,
-    latestTrackerSourceContent: null,
-    trackerMessageIds: new Set,
-    trackerMessageMounts: new Map,
-    trackerMessageRenders: new Map,
-    trackerComparisonBaselines: new Map,
-    trackerGeneratingIndicators: new Map,
-    latestMessageRenderIntent: null,
-    pendingGeneratingIndicatorMessageId: null,
-    sideTrackerMount: null,
-    sideAppMount: null
+    handleMessageRendered,
+    reapplyLatest
   };
 }
 
@@ -12887,6 +12895,7 @@ var PANEL_HTML = `
         </label>
         <label>Context Messages<input id="sst-lumi-llm-msgcount" type="number" min="1" max="50" value="5" /></label>
         <label>Temperature<input id="sst-lumi-llm-temp" type="number" min="0" max="2" step="0.1" value="0.7" /></label>
+        <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-json-format" type="checkbox" />Request JSON output format (JSON trackers only; provider must support it)</label>
         <label class="sst-lumi-checkbox"><input id="sst-lumi-llm-strip" type="checkbox" checked />Strip structural HTML from context</label>
         <button id="sst-lumi-llm-regenerate" type="button" class="sst-lumi-llm-regenerate" disabled>Regenerate Last Tracker</button>
         <div id="sst-lumi-llm-status" class="sst-lumi-llm-status"></div>
@@ -20080,6 +20089,7 @@ function createFrontendControls(deps) {
     const llmMsgCount = byId("sst-lumi-llm-msgcount");
     const llmTemp = byId("sst-lumi-llm-temp");
     const llmStrip = byId("sst-lumi-llm-strip");
+    const llmJsonResponseFormat = byId("sst-lumi-llm-json-format");
     if (llmEnable)
       llmEnable.checked = deps.readConfig().useSecondaryLLM;
     if (llmMsgCount)
@@ -20088,6 +20098,10 @@ function createFrontendControls(deps) {
       llmTemp.value = String(deps.readConfig().secondaryLLMTemperature);
     if (llmStrip)
       llmStrip.checked = deps.readConfig().secondaryLLMStripHTML;
+    if (llmJsonResponseFormat) {
+      llmJsonResponseFormat.checked = deps.readConfig().trackerFormat === "json" && deps.readConfig().secondaryLLMJsonResponseFormat;
+      llmJsonResponseFormat.disabled = deps.readConfig().trackerFormat !== "json";
+    }
     const tsEnable = byId("sst-lumi-ts-enable");
     const tsKey = byId("sst-lumi-ts-key");
     const tsModel = byId("sst-lumi-ts-model");
@@ -20191,6 +20205,7 @@ var DEFAULT_CONFIG = {
   secondaryLLMMessageCount: 5,
   secondaryLLMTemperature: 0.7,
   secondaryLLMStripHTML: true,
+  secondaryLLMJsonResponseFormat: false,
   fertilityCycleBias: "random",
   typeSafeEnabled: false,
   typeSafeApiKey: "",
@@ -20269,12 +20284,12 @@ function registerBackendMessages(deps) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
+    reapplyLatest,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
     applyThemeClass,
     getPresetById,
-    handleTrackerPayload,
     shouldResetStatusAfterConfigLoad,
     inlineProcessor
   } = deps;
@@ -20428,6 +20443,7 @@ function registerBackendMessages(deps) {
       secondaryLLMMessageCount: typeof incoming.secondaryLLMMessageCount === "number" ? incoming.secondaryLLMMessageCount : DEFAULT_CONFIG.secondaryLLMMessageCount,
       secondaryLLMTemperature: typeof incoming.secondaryLLMTemperature === "number" ? incoming.secondaryLLMTemperature : DEFAULT_CONFIG.secondaryLLMTemperature,
       secondaryLLMStripHTML: typeof incoming.secondaryLLMStripHTML === "boolean" ? incoming.secondaryLLMStripHTML : DEFAULT_CONFIG.secondaryLLMStripHTML,
+      secondaryLLMJsonResponseFormat: typeof incoming.secondaryLLMJsonResponseFormat === "boolean" ? incoming.secondaryLLMJsonResponseFormat : DEFAULT_CONFIG.secondaryLLMJsonResponseFormat,
       fertilityCycleBias: typeof incoming.fertilityCycleBias === "string" && FERTILITY_CYCLE_BIAS_VALUES.includes(incoming.fertilityCycleBias) ? incoming.fertilityCycleBias : DEFAULT_CONFIG.fertilityCycleBias,
       typeSafeEnabled: typeof incoming.typeSafeEnabled === "boolean" ? incoming.typeSafeEnabled : DEFAULT_CONFIG.typeSafeEnabled,
       typeSafeApiKey: typeof incoming.typeSafeApiKey === "string" ? incoming.typeSafeApiKey : DEFAULT_CONFIG.typeSafeApiKey,
@@ -20449,11 +20465,7 @@ function registerBackendMessages(deps) {
     applyThemeClass(getPresetById(state.config, state.config.templateId));
     renderCapabilities(state.grantedPermissions, state.requestedPermissions, state.ephemeralPoolStatus);
     updatePermissionGatedControls();
-    if (state.latestContent) {
-      handleContent(state.latestContent, state.latestTrackerMessageId);
-    } else if (state.latestTrackerRaw) {
-      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
-    }
+    reapplyLatest();
     if (shouldResetStatusAfterConfigLoad()) {
       setStatus(DEFAULT_PANEL_STATUS);
     }
@@ -20703,6 +20715,7 @@ function buildSavedFrontendConfig(config, values, fallbackId) {
     secondaryLLMMessageCount: Math.max(1, Math.min(50, Math.floor(Number(values.llmMsgCount) || 5))),
     secondaryLLMTemperature: Math.max(0, Math.min(2, Number(values.llmTemp) || 0.7)),
     secondaryLLMStripHTML: Boolean(values.llmStrip),
+    secondaryLLMJsonResponseFormat: values.format === "json" && Boolean(values.llmJsonResponseFormat),
     fertilityCycleBias: FERTILITY_CYCLE_BIAS_VALUES.includes(values.cycleBias || "") ? values.cycleBias : DEFAULT_CONFIG.fertilityCycleBias,
     typeSafeEnabled: Boolean(values.tsEnable),
     typeSafeApiKey: (values.tsKey || "").trim(),
@@ -20723,8 +20736,7 @@ function registerSettingsActions(deps) {
     getPresetById,
     isImportedTemplate,
     applyThemeClass,
-    handleContent,
-    handleTrackerPayload,
+    reapplyLatest,
     inlineProcessor,
     setStatus,
     persistConfig,
@@ -20747,11 +20759,7 @@ function registerSettingsActions(deps) {
     if (identifierInput && preset.extSettings?.codeBlockIdentifier) {
       identifierInput.value = String(preset.extSettings.codeBlockIdentifier);
     }
-    if (state.latestContent) {
-      handleContent(state.latestContent, state.latestTrackerMessageId);
-    } else if (state.latestTrackerRaw) {
-      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
-    }
+    reapplyLatest();
     inlineProcessor.processAll();
     setStatus(`Previewing template: ${preset.templateName}. Click Save Settings to keep it.`);
   });
@@ -20761,7 +20769,7 @@ function registerSettingsActions(deps) {
     const identifierInput = byId("sst-lumi-identifier");
     const hideInput = byId("sst-lumi-hide");
     const inlineInput = byId("sst-lumi-inline");
-    const formatSelect = byId("sst-lumi-format");
+    const formatSelect2 = byId("sst-lumi-format");
     const retainInput = byId("sst-lumi-retain");
     const cycleBiasSelect = byId("sst-lumi-cycle-bias");
     const selectedTemplate = templateSelectLocal?.value || DEFAULT_CONFIG.templateId;
@@ -20772,6 +20780,7 @@ function registerSettingsActions(deps) {
     const llmMsgCount = byId("sst-lumi-llm-msgcount");
     const llmTemp = byId("sst-lumi-llm-temp");
     const llmStrip = byId("sst-lumi-llm-strip");
+    const llmJsonResponseFormat = byId("sst-lumi-llm-json-format");
     const tsEnable = byId("sst-lumi-ts-enable");
     const tsKey = byId("sst-lumi-ts-key");
     const tsModel = byId("sst-lumi-ts-model");
@@ -20785,7 +20794,7 @@ function registerSettingsActions(deps) {
       identifier: identifierInput?.value,
       hide: hideInput?.checked,
       inline: inlineInput?.checked,
-      format: formatSelect?.value,
+      format: formatSelect2?.value,
       retain: retainInput?.value,
       llmEnable: llmEnable?.checked,
       llmConnection: llmConnection?.value,
@@ -20793,6 +20802,7 @@ function registerSettingsActions(deps) {
       llmMsgCount: llmMsgCount?.value,
       llmTemp: llmTemp?.value,
       llmStrip: llmStrip?.checked,
+      llmJsonResponseFormat: llmJsonResponseFormat?.checked,
       cycleBias: cycleBiasSelect?.value,
       tsEnable: tsEnable?.checked,
       tsKey: tsKey?.value,
@@ -20807,6 +20817,12 @@ function registerSettingsActions(deps) {
     applyTagInterceptor();
     inlineProcessor.processAll();
     setStatus("Saving settings...");
+  });
+  const formatSelect = byId("sst-lumi-format");
+  formatSelect?.addEventListener("change", () => {
+    const jsonFormat = byId("sst-lumi-llm-json-format");
+    if (jsonFormat)
+      jsonFormat.disabled = formatSelect.value !== "json";
   });
   const exportButton = byId("sst-lumi-export");
   exportButton?.addEventListener("click", () => {
@@ -20872,7 +20888,7 @@ function registerSettingsActions(deps) {
     ctx.sendToBackend({
       type: "regenerate_secondary_tracker",
       chatId,
-      messageId: state.latestTrackerMessageId ?? undefined
+      messageId: deps.readLatestTrackerMessageId() ?? undefined
     });
   });
 }
@@ -21363,7 +21379,6 @@ function setup(ctx) {
   let removeHideStyle = null;
   let removeTagInterceptor = null;
   let tagInterceptorSignature = null;
-  const renderState = createTrackerRenderState();
   let configReady = false;
   const inlineProcessor = createInlineTemplateProcessor({
     getConfig: () => ({
@@ -21381,12 +21396,9 @@ function setup(ctx) {
     getActiveChatId: () => ctx.getActiveChat()?.chatId || null,
     sendLatestRequest: (chatId) => ctx.sendToBackend({ type: "get_latest_tracker", chatId }),
     isConfigReady: () => configReady,
-    hasRenderedMessage: (messageId) => renderState.trackerMessageIds.has(messageId),
-    setComparisonBaseline: (messageId, previousPayload) => {
-      renderState.trackerComparisonBaselines.clear();
-      renderState.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
-    },
-    renderPayload: (payload) => handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId)
+    hasRenderedMessage: (messageId) => rendering.hasRenderedMessage(messageId),
+    setComparisonBaseline: (messageId, previousPayload) => rendering.setComparisonBaseline(messageId, previousPayload),
+    renderPayload: (payload) => rendering.handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId)
   });
   const removePanelStyle = ctx.dom.addStyle(PANEL_CSS);
   const mountRoot = ctx.ui.mount("settings_extensions");
@@ -21442,27 +21454,16 @@ function setup(ctx) {
     },
     readConnections: () => connections,
     readGrantedPermissions: () => grantedPermissions,
-    readLatestTrackerMessageId: () => renderState.latestTrackerMessageId,
+    readLatestTrackerMessageId: () => rendering.readLatestTrackerMessageId(),
     isConfigReady: () => configReady,
     isActivityForActiveChat: (chatId) => isActivityForActiveChat(chatId),
-    handleTrackerPayload: (raw, sourceContent, messageId) => handleTrackerPayload(raw, sourceContent, messageId),
+    handleTrackerPayload: (raw, sourceContent, messageId) => rendering.handleTrackerPayload(raw, sourceContent, messageId),
     mountTemplateOptions,
     isImportedTemplate
   });
-  const {
-    showGeneratingIndicator,
-    hideGeneratingIndicator,
-    resetForChat,
-    clearForSwipe,
-    forgetMessage,
-    dispose: disposeTrackerRendering,
-    handleTrackerPayload,
-    handleContent,
-    handleMessageRendered
-  } = createTrackerRendering({
+  const rendering = createTrackerRendering({
     ctx,
     byId,
-    state: renderState,
     hydration,
     readConfig: () => config,
     isConfigReady: () => configReady,
@@ -21475,6 +21476,17 @@ function setup(ctx) {
     updateRegenerateButton,
     hasPermission
   });
+  const {
+    showGeneratingIndicator,
+    hideGeneratingIndicator,
+    resetForChat,
+    clearForSwipe,
+    forgetMessage,
+    dispose: disposeTrackerRendering,
+    handleContent,
+    handleMessageRendered,
+    reapplyLatest
+  } = rendering;
   const persistConfig = () => {
     ctx.sendToBackend({ type: "set_config", config });
   };
@@ -21529,30 +21541,6 @@ function setup(ctx) {
       },
       set configRetryTimer(value) {
         configRetryTimer = value;
-      },
-      get latestContent() {
-        return renderState.latestContent;
-      },
-      set latestContent(value) {
-        renderState.latestContent = value;
-      },
-      get latestTrackerMessageId() {
-        return renderState.latestTrackerMessageId;
-      },
-      set latestTrackerMessageId(value) {
-        renderState.latestTrackerMessageId = value;
-      },
-      get latestTrackerRaw() {
-        return renderState.latestTrackerRaw;
-      },
-      set latestTrackerRaw(value) {
-        renderState.latestTrackerRaw = value;
-      },
-      get latestTrackerSourceContent() {
-        return renderState.latestTrackerSourceContent;
-      },
-      set latestTrackerSourceContent(value) {
-        renderState.latestTrackerSourceContent = value;
       }
     },
     hydration,
@@ -21568,12 +21556,12 @@ function setup(ctx) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
+    reapplyLatest,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
     applyThemeClass,
     getPresetById,
-    handleTrackerPayload,
     shouldResetStatusAfterConfigLoad,
     inlineProcessor
   });
@@ -21645,30 +21633,6 @@ function setup(ctx) {
       set configTrackerTagNameHint(value) {
         configTrackerTagNameHint = value;
       },
-      get latestContent() {
-        return renderState.latestContent;
-      },
-      set latestContent(value) {
-        renderState.latestContent = value;
-      },
-      get latestTrackerMessageId() {
-        return renderState.latestTrackerMessageId;
-      },
-      set latestTrackerMessageId(value) {
-        renderState.latestTrackerMessageId = value;
-      },
-      get latestTrackerRaw() {
-        return renderState.latestTrackerRaw;
-      },
-      set latestTrackerRaw(value) {
-        renderState.latestTrackerRaw = value;
-      },
-      get latestTrackerSourceContent() {
-        return renderState.latestTrackerSourceContent;
-      },
-      set latestTrackerSourceContent(value) {
-        renderState.latestTrackerSourceContent = value;
-      },
       get modelCombobox() {
         return modelCombobox;
       },
@@ -21680,8 +21644,8 @@ function setup(ctx) {
     getPresetById,
     isImportedTemplate,
     applyThemeClass,
-    handleContent,
-    handleTrackerPayload,
+    reapplyLatest,
+    readLatestTrackerMessageId: rendering.readLatestTrackerMessageId,
     inlineProcessor,
     setStatus,
     persistConfig,

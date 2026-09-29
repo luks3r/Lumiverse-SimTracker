@@ -6802,6 +6802,7 @@ var DEFAULT_CONFIG = {
   secondaryLLMMessageCount: 5,
   secondaryLLMTemperature: 0.7,
   secondaryLLMStripHTML: true,
+  secondaryLLMJsonResponseFormat: false,
   fertilityCycleBias: "random",
   typeSafeEnabled: false,
   typeSafeApiKey: "",
@@ -14258,6 +14259,9 @@ ${trackerBlock}`;
         model: trimmedModel,
         temperature: config.secondaryLLMTemperature
       };
+      if (config.trackerFormat === "json" && config.secondaryLLMJsonResponseFormat) {
+        parameters.response_format = { type: "json_object" };
+      }
       spindle2.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
       const generationRequest = {
         type: "raw",
@@ -14411,6 +14415,7 @@ function normalizeStoredConfig(parsed) {
     secondaryLLMMessageCount: sanitizeMessageCount(parsed.secondaryLLMMessageCount),
     secondaryLLMTemperature: sanitizeTemperature(parsed.secondaryLLMTemperature),
     secondaryLLMStripHTML: sanitizeBool(parsed.secondaryLLMStripHTML, DEFAULT_CONFIG.secondaryLLMStripHTML),
+    secondaryLLMJsonResponseFormat: sanitizeBool(parsed.secondaryLLMJsonResponseFormat, DEFAULT_CONFIG.secondaryLLMJsonResponseFormat),
     fertilityCycleBias: sanitizeFertilityCycleBias(parsed.fertilityCycleBias),
     typeSafeEnabled: sanitizeBool(parsed.typeSafeEnabled, DEFAULT_CONFIG.typeSafeEnabled),
     typeSafeApiKey: "",
@@ -14438,6 +14443,7 @@ function mergeTrackerConfig(config, incoming) {
     secondaryLLMMessageCount: sanitizeMessageCount(incoming?.secondaryLLMMessageCount ?? config.secondaryLLMMessageCount),
     secondaryLLMTemperature: sanitizeTemperature(incoming?.secondaryLLMTemperature ?? config.secondaryLLMTemperature),
     secondaryLLMStripHTML: sanitizeBool(incoming?.secondaryLLMStripHTML ?? config.secondaryLLMStripHTML, config.secondaryLLMStripHTML),
+    secondaryLLMJsonResponseFormat: sanitizeBool(incoming?.secondaryLLMJsonResponseFormat ?? config.secondaryLLMJsonResponseFormat, config.secondaryLLMJsonResponseFormat),
     fertilityCycleBias: sanitizeFertilityCycleBias(incoming?.fertilityCycleBias ?? config.fertilityCycleBias),
     typeSafeEnabled: sanitizeBool(incoming?.typeSafeEnabled ?? config.typeSafeEnabled, config.typeSafeEnabled),
     typeSafeApiKey: sanitizeStr(incoming?.typeSafeApiKey ?? config.typeSafeApiKey, config.typeSafeApiKey),

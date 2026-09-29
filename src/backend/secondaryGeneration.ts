@@ -320,6 +320,9 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       model: trimmedModel,
       temperature: config.secondaryLLMTemperature,
     };
+    if (config.trackerFormat === "json" && config.secondaryLLMJsonResponseFormat) {
+      parameters.response_format = { type: "json_object" };
+    }
 
     spindle.log.info(
       `Secondary LLM request → chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`,

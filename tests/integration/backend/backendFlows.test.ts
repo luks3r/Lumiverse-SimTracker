@@ -138,6 +138,7 @@ describe("backend host flows", () => {
       retainTrackerCount: 0,
       trackerFormat: "json",
       secondaryLLMModel: "",
+      secondaryLLMJsonResponseFormat: false,
       typeSafeApiKey: "",
     });
   });
@@ -151,12 +152,15 @@ describe("backend host flows", () => {
       trackerTagName: " My Tracker! ",
       retainTrackerCount: 50,
       secondaryLLMModel: "string",
+      secondaryLLMJsonResponseFormat: true,
       typeSafeApiKey: "secret",
     } });
     const config = updated.find((message) => message.type === "config")?.config as FrontendMessage;
     expect(config.trackerTagName).toBe("mytracker");
     expect(config.retainTrackerCount).toBe(20);
     expect(config.secondaryLLMModel).toBe("");
+    expect(config.secondaryLLMJsonResponseFormat).toBe(true);
+    expect(saved.at(-1)?.secondaryLLMJsonResponseFormat).toBe(true);
     expect(saved.at(-1)?.typeSafeApiKey).toBe("");
     expect(updated.some((message) => message.type === "config_saved")).toBe(true);
   });

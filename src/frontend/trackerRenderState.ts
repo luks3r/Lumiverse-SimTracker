@@ -1,6 +1,23 @@
-import type { createTrackerRendering } from "./trackerRendering";
+import type { SpindleAppMountHandle } from "lumiverse-spindle-types";
+import type { TrackerData } from "../shared/trackerData";
+import type { LatestMessageRenderIntent, TrackerRenderInputs } from "./trackerRendering";
 
-type TrackerRenderState = Parameters<typeof createTrackerRendering>[0]["state"];
+export type TrackerRenderState = {
+  previousTrackerData: TrackerData | null;
+  latestContent: string | null;
+  latestTrackerMessageId: string | null;
+  latestTrackerRaw: string | null;
+  latestTrackerSourceContent: string | null;
+  trackerMessageIds: Set<string>;
+  trackerMessageMounts: Map<string, Element>;
+  trackerMessageRenders: Map<string, TrackerRenderInputs>;
+  trackerComparisonBaselines: Map<string, TrackerData | null>;
+  trackerGeneratingIndicators: Map<string, Element>;
+  latestMessageRenderIntent: LatestMessageRenderIntent | null;
+  pendingGeneratingIndicatorMessageId: string | null;
+  sideTrackerMount: Element | null;
+  sideAppMount: { mount: SpindleAppMountHandle; side: string } | null;
+};
 
 export function createTrackerRenderState(): TrackerRenderState {
   return {

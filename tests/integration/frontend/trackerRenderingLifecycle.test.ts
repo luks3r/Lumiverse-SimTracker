@@ -1,27 +1,32 @@
 import { expect, test } from "bun:test";
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import { DEFAULT_CONFIG } from "../../../src/shared/trackerConfig";
-import { getTemplatePresetById } from "../../../src/shared/templatePresets";
 import { createTrackerHydration } from "../../../src/frontend/trackerHydration";
 import { createTrackerRendering } from "../../../src/frontend/trackerRendering";
-import { createTrackerRenderState } from "../../../src/frontend/trackerRenderState";
 
-test("switching chats clears message and side mounts and forgets comparison data", () => {
-  const removed: Element[] = [];
-  let sideRemoved = 0;
-  let buttonUpdates = 0;
-  const messageMount = {} as Element;
-  const indicatorMount = {} as Element;
-  const state = createTrackerRenderState();
-  state.previousTrackerData = { characters: [{ name: "Old" }] };
-  state.latestTrackerMessageId = "old-message";
-  state.latestTrackerRaw = "old payload";
-  state.trackerMessageIds.add("old-message");
-  state.trackerMessageMounts.set("old-message", messageMount);
-  state.trackerGeneratingIndicators.set("old-message", indicatorMount);
-  state.trackerComparisonBaselines.set("old-message", null);
-  state.sideTrackerMount = { remove: () => { sideRemoved += 1; } } as unknown as Element;
-  const ctx = { dom: { uninject: (mount: Element) => { removed.push(mount); } } } as unknown as SpindleFrontendContext;
+const TRACKER = '{"characters":[{"name":"Alice"}]}';
+
+function makeRenderer(options: { side?: boolean; extractTrackerBlock?: () => string | null } = {}) {
+  const actions: string[] = [];
+  const rendered: string[] = [];
+  const messageNode = { querySelector: () => null } as unknown as Element;
+  const ctx = {
+    dom: {
+      findMessageElement: () => messageNode,
+      inject: (_parent: unknown, html: string) => {
+        const kind = html.includes("sst-tracker-generating") ? "indicator" : options.side ? "side" : "tracker";
+        actions.push(`inject:${kind}`);
+        return {
+          isConnected: true,
+          querySelectorAll: () => [],
+          remove: () => { actions.push(`remove:${kind}`); },
+        } as unknown as Element;
+      },
+      uninject: () => { actions.push("uninject:mount"); },
+    },
+    messages: { getLatestMessageId: () => "old-message" },
+    ui: { mount: () => messageNode },
+  } as unknown as SpindleFrontendContext;
   const hydration = createTrackerHydration({
     getActiveChatId: () => null,
     sendLatestRequest: () => {},
@@ -33,102 +38,87 @@ test("switching chats clears message and side mounts and forgets comparison data
   const renderer = createTrackerRendering({
     ctx,
     byId: () => null,
-    state,
     hydration,
     readConfig: () => DEFAULT_CONFIG,
     isConfigReady: () => true,
-    getPresetById: (_config, id) => getTemplatePresetById(id),
-    extractTrackerBlock: () => null,
-    setStatus: () => {},
+    getPresetById: () => ({
+      id: "test",
+      templateName: "Test",
+      htmlTemplate: "<div>{{name}}</div>",
+      templatePosition: options.side ? "LEFT" : "BOTTOM",
+    }),
+    extractTrackerBlock: options.extractTrackerBlock || (() => TRACKER),
+    setStatus: (value) => { actions.push(`status:${value}`); },
     renderEmpty: () => {},
-    renderTracker: () => {},
+    renderTracker: (_data, raw) => { rendered.push(raw); },
     applyThemeClass: () => {},
-    updateRegenerateButton: () => { buttonUpdates += 1; },
+    updateRegenerateButton: () => { actions.push("button updated"); },
     hasPermission: () => false,
   });
+  return { renderer, actions, rendered };
+}
+
+test("switching chats removes message and indicator mounts", () => {
+  const { renderer, actions } = makeRenderer();
+  renderer.handleTrackerPayload(TRACKER, TRACKER, "old-message");
+  renderer.showGeneratingIndicator("old-message");
+  actions.length = 0;
 
   renderer.resetForChat();
 
-  expect(removed).toEqual([messageMount, indicatorMount]);
-  expect(sideRemoved).toBe(1);
-  expect(buttonUpdates).toBe(1);
-  expect(state.latestTrackerRaw).toBeNull();
-  expect(state.latestTrackerMessageId).toBeNull();
-  expect(state.trackerComparisonBaselines.size).toBe(0);
+  expect(actions).toEqual(["button updated", "uninject:mount", "uninject:mount"]);
+  expect(renderer.readLatestTrackerMessageId()).toBeNull();
+  expect(renderer.hasRenderedMessage("old-message")).toBe(false);
+});
+
+test("switching chats removes a side mount", () => {
+  const { renderer, actions } = makeRenderer({ side: true });
+  renderer.handleTrackerPayload(TRACKER, TRACKER, "old-message");
+  actions.length = 0;
+
+  renderer.resetForChat();
+
+  expect(actions).toContain("remove:side");
 });
 
 test("swiping clears the previous render before clearing inline content", () => {
-  const actions: string[] = [];
-  const mount = {} as Element;
-  const state = createTrackerRenderState();
-  state.latestTrackerMessageId = "old-message";
-  state.latestTrackerRaw = "old payload";
-  state.trackerMessageMounts.set("old-message", mount);
-  const ctx = { dom: { uninject: () => { actions.push("uninject"); } } } as unknown as SpindleFrontendContext;
-  const hydration = createTrackerHydration({
-    getActiveChatId: () => null, sendLatestRequest: () => {}, isConfigReady: () => true,
-    hasRenderedMessage: () => false, setComparisonBaseline: () => {}, renderPayload: () => {},
-  });
-  const renderer = createTrackerRendering({
-    ctx, byId: () => null, state, hydration, readConfig: () => DEFAULT_CONFIG,
-    isConfigReady: () => true, getPresetById: (_config, id) => getTemplatePresetById(id),
-    extractTrackerBlock: () => null, setStatus: () => {}, renderEmpty: () => {},
-    renderTracker: () => {}, applyThemeClass: () => {}, updateRegenerateButton: () => {}, hasPermission: () => false,
-  });
+  const { renderer, actions } = makeRenderer();
+  renderer.handleTrackerPayload(TRACKER, TRACKER, "old-message");
+  actions.length = 0;
 
   renderer.clearForSwipe("new-message", (messageId) => { actions.push(`inline:${messageId}`); });
 
-  expect(actions).toEqual(["uninject", "inline:old-message", "inline:new-message"]);
-  expect(state.latestTrackerRaw).toBeNull();
-  expect(state.latestTrackerMessageId).toBe("old-message");
+  expect(actions).toEqual(["uninject:mount", "inline:old-message", "inline:new-message"]);
+  expect(renderer.readLatestTrackerMessageId()).toBe("old-message");
 });
 
 test("deleting the latest message removes its tracker and clears regeneration state", () => {
-  const actions: string[] = [];
-  const mount = {} as Element;
-  const indicator = {} as Element;
-  const state = createTrackerRenderState();
-  state.latestTrackerMessageId = "deleted";
-  state.latestTrackerRaw = "deleted payload";
-  state.trackerMessageIds.add("deleted");
-  state.trackerMessageMounts.set("deleted", mount);
-  state.trackerGeneratingIndicators.set("deleted", indicator);
-  const ctx = { dom: { uninject: (node: Element) => { actions.push(node === mount ? "tracker removed" : "indicator removed"); } } } as unknown as SpindleFrontendContext;
-  const hydration = createTrackerHydration({
-    getActiveChatId: () => null, sendLatestRequest: () => {}, isConfigReady: () => true,
-    hasRenderedMessage: () => false, setComparisonBaseline: () => {}, renderPayload: () => {},
-  });
-  const renderer = createTrackerRendering({
-    ctx, byId: () => null, state, hydration, readConfig: () => DEFAULT_CONFIG,
-    isConfigReady: () => true, getPresetById: (_config, id) => getTemplatePresetById(id),
-    extractTrackerBlock: () => null, setStatus: () => {}, renderEmpty: () => {},
-    renderTracker: () => {}, applyThemeClass: () => {}, updateRegenerateButton: () => { actions.push("button updated"); }, hasPermission: () => false,
-  });
+  const { renderer, actions } = makeRenderer();
+  renderer.handleTrackerPayload(TRACKER, TRACKER, "old-message");
+  renderer.showGeneratingIndicator("old-message");
+  actions.length = 0;
 
-  renderer.forgetMessage("deleted", (id) => { actions.push(`inline:${id}`); });
+  renderer.forgetMessage("old-message", (messageId) => { actions.push(`inline:${messageId}`); });
 
-  expect(actions).toEqual(["tracker removed", "indicator removed", "inline:deleted", "button updated"]);
-  expect(state.latestTrackerMessageId).toBeNull();
-  expect(state.latestTrackerRaw).toBeNull();
+  expect(actions).toEqual(["uninject:mount", "uninject:mount", "inline:old-message", "button updated"]);
+  expect(renderer.readLatestTrackerMessageId()).toBeNull();
 });
 
 test("a newly mounted latest message can attach its tracker from host content", () => {
-  const statuses: string[] = [];
-  const state = createTrackerRenderState();
-  const ctx = { messages: { getLatestMessageId: () => "latest" } } as unknown as SpindleFrontendContext;
-  const hydration = createTrackerHydration({
-    getActiveChatId: () => null, sendLatestRequest: () => {}, isConfigReady: () => true,
-    hasRenderedMessage: () => false, setComparisonBaseline: () => {}, renderPayload: () => {},
-  });
-  const renderer = createTrackerRendering({
-    ctx, byId: () => null, state, hydration, readConfig: () => DEFAULT_CONFIG,
-    isConfigReady: () => true, getPresetById: (_config, id) => getTemplatePresetById(id),
-    extractTrackerBlock: () => "not-json-or-yaml: [",
-    setStatus: (value) => { statuses.push(value); }, renderEmpty: () => {},
-    renderTracker: () => {}, applyThemeClass: () => {}, updateRegenerateButton: () => {}, hasPermission: () => false,
-  });
+  const { renderer, actions } = makeRenderer({ extractTrackerBlock: () => "not-json-or-yaml: [" });
 
-  renderer.handleMessageRendered("latest", "host content");
+  renderer.handleMessageRendered("old-message", "host content");
 
-  expect(statuses).toEqual(["Tracker found (invalid JSON/YAML)"]);
+  expect(actions).toContain("status:Tracker found (invalid JSON/YAML)");
+});
+
+test("reapplying a template prefers latest source content over cached raw tracker", () => {
+  const { renderer, rendered } = makeRenderer({ extractTrackerBlock: () => TRACKER });
+  renderer.handleContent("latest message source", null);
+  renderer.handleTrackerPayload('{"characters":[{"name":"Cached"}]}', "cached", null);
+  rendered.length = 0;
+
+  renderer.reapplyLatest();
+
+  expect(rendered).toEqual([TRACKER]);
 });

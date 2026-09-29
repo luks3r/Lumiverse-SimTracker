@@ -1,10 +1,11 @@
-import type { SpindleAppMountHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
+import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import type { TemplatePreset } from "../shared/templatePresets";
 import type { TrackerConfig } from "../shared/trackerConfig";
 import { parseTrackerBlock, type TrackerData } from "../shared/trackerData";
 import { resolveTrackerMountMode, type TrackerMountMode } from "./frontendTemplate";
 import { buildTrackerMarkup } from "./frontendTemplateRenderer";
 import type { TrackerHydration } from "./trackerHydration";
+import { createTrackerRenderState } from "./trackerRenderState";
 
 export type TrackerRenderInputs = {
   data: TrackerData;
@@ -24,22 +25,6 @@ export type PendingTrackerPayload = {
 export function createTrackerRendering(deps: {
   ctx: SpindleFrontendContext;
   byId: <T extends Element>(id: string) => T | null;
-  state: {
-    previousTrackerData: TrackerData | null;
-    latestContent: string | null;
-    latestTrackerMessageId: string | null;
-    latestTrackerRaw: string | null;
-    latestTrackerSourceContent: string | null;
-    trackerMessageIds: Set<string>;
-    trackerMessageMounts: Map<string, Element>;
-    trackerMessageRenders: Map<string, TrackerRenderInputs>;
-    trackerComparisonBaselines: Map<string, TrackerData | null>;
-    trackerGeneratingIndicators: Map<string, Element>;
-    latestMessageRenderIntent: LatestMessageRenderIntent | null;
-    pendingGeneratingIndicatorMessageId: string | null;
-    sideTrackerMount: Element | null;
-    sideAppMount: { mount: SpindleAppMountHandle; side: string } | null;
-  };
   hydration: TrackerHydration;
   readConfig: () => TrackerConfig;
   isConfigReady: () => boolean;
@@ -53,9 +38,10 @@ export function createTrackerRendering(deps: {
   hasPermission: (name: string) => boolean;
 }) {
   const {
-    ctx, byId, state, getPresetById, extractTrackerBlock, setStatus,
+    ctx, byId, getPresetById, extractTrackerBlock, setStatus,
     renderEmpty, renderTracker, applyThemeClass, updateRegenerateButton, hasPermission,
   } = deps;
+  const state = createTrackerRenderState();
   const injectIntoPanelBody = (html: string) => {
     const panelBody = byId<HTMLElement>("sst-lumi-body");
     if (!panelBody || !panelBody.isConnected) return;
@@ -503,22 +489,32 @@ export function createTrackerRendering(deps: {
     if (needsLatestAttach && content) handleContent(content, messageId);
   };
 
+  const reapplyLatest = () => {
+    if (state.latestContent) {
+      handleContent(state.latestContent, state.latestTrackerMessageId);
+    } else if (state.latestTrackerRaw) {
+      handleTrackerPayload(state.latestTrackerRaw, state.latestTrackerSourceContent || state.latestTrackerRaw, state.latestTrackerMessageId);
+    }
+  };
+
+  const setComparisonBaseline = (messageId: string, previousPayload: string | null) => {
+    state.trackerComparisonBaselines.clear();
+    state.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
+  };
+
   return {
+    hasRenderedMessage: (messageId: string) => state.trackerMessageIds.has(messageId),
+    readLatestTrackerMessageId: () => state.latestTrackerMessageId,
+    setComparisonBaseline,
     resetForChat,
     clearForSwipe,
     forgetMessage,
     dispose,
-    clearMessageTrackerRender,
-    pruneNonLatestMessageTrackers,
-    clearLatestMessageRenderIntent,
-    retryLatestMessageRenderIntent,
-    clearSideTrackerRender,
     showGeneratingIndicator,
     hideGeneratingIndicator,
-    hideAllGeneratingIndicators,
-    retryGeneratingIndicator,
     handleTrackerPayload,
     handleContent,
     handleMessageRendered,
+    reapplyLatest,
   };
 }

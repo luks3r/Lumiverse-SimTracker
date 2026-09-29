@@ -30,6 +30,7 @@ let connectionProvider = "openai";
 let selectedConnectionId = "conn-1";
 let selectedModelOverride = "";
 let trackerFormat: "json" | "yaml" = "json";
+let jsonResponseFormat = false;
 let retainTrackerCount = 0;
 let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | null = null;
 let generationGate: Promise<void> | null = null;
@@ -59,6 +60,7 @@ const spindle = {
       secondaryLLMModel: selectedModelOverride,
       retainTrackerCount,
       trackerFormat,
+      secondaryLLMJsonResponseFormat: jsonResponseFormat,
       typeSafeEnabled: false,
     }),
   },
@@ -97,7 +99,7 @@ let nextChatId = 0;
 
 async function runGeneration(
   responseTexts: string[],
-  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number } = {},
+  options: { initialContent?: string; connectionModel?: string; connectionProvider?: string; selectedConnectionId?: string; selectedModelOverride?: string; trackerFormat?: "json" | "yaml"; jsonResponseFormat?: boolean; priorTracker?: string; priorTrackers?: string[]; retainTrackerCount?: number } = {},
 ) {
   const chatId = `flow-test-${++nextChatId}`;
   const userId = `user-${nextChatId}`;
@@ -108,6 +110,7 @@ async function runGeneration(
   selectedConnectionId = options.selectedConnectionId ?? "conn-1";
   selectedModelOverride = options.selectedModelOverride ?? "";
   trackerFormat = options.trackerFormat ?? "json";
+  jsonResponseFormat = options.jsonResponseFormat ?? false;
   retainTrackerCount = options.retainTrackerCount ?? 0;
   const message: Message = {
     id: messageId,
@@ -159,6 +162,7 @@ describe("secondary generation flow", () => {
     connectionModel = "connection-default";
     selectedModelOverride = "model-A";
     trackerFormat = "json";
+    jsonResponseFormat = false;
     retainTrackerCount = 0;
     await send({ type: "get_config" }, userId);
 
@@ -198,9 +202,39 @@ describe("secondary generation flow", () => {
     expect(requests[0].provider).toBe("openai");
     expect(requests[0].connection_id).toBe("conn-1");
     expect(requests[0].parameters?.model).toBe("gpt-test");
+    expect(requests[0].parameters?.response_format).toBeUndefined();
     expect(updates).toHaveLength(1);
     expect(message.content).toContain('<tracker type="sim">');
     expect(message.content).toContain('"ap": 75');
+  });
+
+  test("JSON response format can be enabled for secondary generation", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], { jsonResponseFormat: true });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].parameters?.response_format).toEqual({ type: "json_object" });
+  });
+
+  test("custom providers can opt into JSON response format", async () => {
+    const { result } = await runGeneration(['{"worldData":{},"characters":[]}'], {
+      connectionProvider: "custom-provider",
+      jsonResponseFormat: true,
+    });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].provider).toBe("custom-provider");
+    expect(requests[0].parameters?.response_format).toEqual({ type: "json_object" });
+  });
+
+  test("YAML generation never sends JSON response format even if the setting is enabled", async () => {
+    const { result, message } = await runGeneration(
+      ["worldData:\n  current_date: 2025-08-10\ncharacters:\n  - name: Alice"],
+      { trackerFormat: "yaml", jsonResponseFormat: true },
+    );
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[0].parameters?.response_format).toBeUndefined();
+    expect(message.content).toContain("worldData:\n  current_date: 2025-08-10");
   });
 
   test("passes default connection id to generation", async () => {
@@ -233,6 +267,13 @@ describe("secondary generation flow", () => {
     expect(requests[1].messages[1].content).toBe(broken);
     expect(updates).toHaveLength(1);
     expect(message.content).toContain('"ap": 75');
+  });
+
+  test("JSON response format remains set on a syntax repair request", async () => {
+    const { result } = await runGeneration(["{invalid", '{"worldData":{},"characters":[]}'], { jsonResponseFormat: true });
+
+    expect(result.type).toBe("secondary_generation_complete");
+    expect(requests[1].parameters?.response_format).toEqual({ type: "json_object" });
   });
 
   test("does not mutate chat when repair remains invalid", async () => {

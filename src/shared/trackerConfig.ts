@@ -28,6 +28,7 @@ export type TrackerConfig = {
   secondaryLLMMessageCount: number;
   secondaryLLMTemperature: number;
   secondaryLLMStripHTML: boolean;
+  secondaryLLMJsonResponseFormat: boolean;
   fertilityCycleBias: FertilityCycleBias;
   typeSafeEnabled: boolean;
   typeSafeApiKey: string;
@@ -54,6 +55,7 @@ export const DEFAULT_CONFIG: TrackerConfig = {
   secondaryLLMMessageCount: 5,
   secondaryLLMTemperature: 0.7,
   secondaryLLMStripHTML: true,
+  secondaryLLMJsonResponseFormat: false,
   fertilityCycleBias: "random",
   typeSafeEnabled: false,
   typeSafeApiKey: "",

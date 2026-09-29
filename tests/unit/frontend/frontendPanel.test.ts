@@ -6,6 +6,7 @@ describe("frontend panel assets", () => {
     expect(PANEL_HTML).toContain(`id="sst-lumi-status">${DEFAULT_PANEL_STATUS}</span>`);
     expect(PANEL_HTML).toContain('id="sst-lumi-llm-connection"');
     expect(PANEL_HTML).toContain('id="sst-lumi-llm-model-mount"');
+    expect(PANEL_HTML).toContain('id="sst-lumi-llm-json-format"');
     expect(PANEL_HTML).toContain('id="sst-lumi-delete-template" type="button" disabled');
     const ids = [...PANEL_HTML.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);

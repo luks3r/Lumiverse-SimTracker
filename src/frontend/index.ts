@@ -1,8 +1,6 @@
 import type { SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
-import { parseTrackerBlock } from "../shared/trackerData";
 import { createReadyGate } from "./frontendReadyGate";
 import { createTrackerRendering } from "./trackerRendering";
-import { createTrackerRenderState } from "./trackerRenderState";
 import { LOADING_CONFIG_STATUS, PANEL_CSS, PANEL_HTML } from "./frontendPanel";
 import { createPanelHost } from "./panelHost";
 import { createFrontendControls, type ConnectionProfile } from "./frontendControls";
@@ -45,7 +43,6 @@ export function setup(ctx: SpindleFrontendContext) {
   let removeHideStyle: (() => void) | null = null;
   let removeTagInterceptor: (() => void) | null = null;
   let tagInterceptorSignature: string | null = null;
-  const renderState = createTrackerRenderState();
   let configReady = false;
   const inlineProcessor = createInlineTemplateProcessor({
     getConfig: () => ({
@@ -63,12 +60,9 @@ export function setup(ctx: SpindleFrontendContext) {
     getActiveChatId: () => ctx.getActiveChat()?.chatId || null,
     sendLatestRequest: (chatId) => ctx.sendToBackend({ type: "get_latest_tracker", chatId } satisfies FrontendToBackendMessage),
     isConfigReady: () => configReady,
-    hasRenderedMessage: (messageId) => renderState.trackerMessageIds.has(messageId),
-    setComparisonBaseline: (messageId, previousPayload) => {
-      renderState.trackerComparisonBaselines.clear();
-      renderState.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
-    },
-    renderPayload: (payload) => handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId),
+    hasRenderedMessage: (messageId) => rendering.hasRenderedMessage(messageId),
+    setComparisonBaseline: (messageId, previousPayload) => rendering.setComparisonBaseline(messageId, previousPayload),
+    renderPayload: (payload) => rendering.handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId),
   });
 
   const removePanelStyle = ctx.dom.addStyle(PANEL_CSS);
@@ -112,28 +106,17 @@ export function setup(ctx: SpindleFrontendContext) {
     writeConfig: (value) => { config = value; },
     readConnections: () => connections,
     readGrantedPermissions: () => grantedPermissions,
-    readLatestTrackerMessageId: () => renderState.latestTrackerMessageId,
+    readLatestTrackerMessageId: () => rendering.readLatestTrackerMessageId(),
     isConfigReady: () => configReady,
     isActivityForActiveChat: (chatId) => isActivityForActiveChat(chatId),
-    handleTrackerPayload: (raw, sourceContent, messageId) => handleTrackerPayload(raw, sourceContent, messageId),
+    handleTrackerPayload: (raw, sourceContent, messageId) => rendering.handleTrackerPayload(raw, sourceContent, messageId),
     mountTemplateOptions,
     isImportedTemplate,
   });
 
-  const {
-    showGeneratingIndicator,
-    hideGeneratingIndicator,
-    resetForChat,
-    clearForSwipe,
-    forgetMessage,
-    dispose: disposeTrackerRendering,
-    handleTrackerPayload,
-    handleContent,
-    handleMessageRendered,
-  } = createTrackerRendering({
+  const rendering = createTrackerRendering({
     ctx,
     byId,
-    state: renderState,
     hydration,
     readConfig: () => config,
     isConfigReady: () => configReady,
@@ -146,6 +129,17 @@ export function setup(ctx: SpindleFrontendContext) {
     updateRegenerateButton,
     hasPermission,
   });
+  const {
+    showGeneratingIndicator,
+    hideGeneratingIndicator,
+    resetForChat,
+    clearForSwipe,
+    forgetMessage,
+    dispose: disposeTrackerRendering,
+    handleContent,
+    handleMessageRendered,
+    reapplyLatest,
+  } = rendering;
 
   const persistConfig = () => {
     ctx.sendToBackend({ type: "set_config", config } satisfies FrontendToBackendMessage);
@@ -171,14 +165,6 @@ export function setup(ctx: SpindleFrontendContext) {
       set configReady(value) { configReady = value; },
       get configRetryTimer() { return configRetryTimer; },
       set configRetryTimer(value) { configRetryTimer = value; },
-      get latestContent() { return renderState.latestContent; },
-      set latestContent(value) { renderState.latestContent = value; },
-      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
-      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
-      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
     },
     hydration,
     panelHost,
@@ -193,12 +179,12 @@ export function setup(ctx: SpindleFrontendContext) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
+    reapplyLatest,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
     applyThemeClass,
     getPresetById,
-    handleTrackerPayload,
     shouldResetStatusAfterConfigLoad,
     inlineProcessor,
   });
@@ -247,14 +233,6 @@ export function setup(ctx: SpindleFrontendContext) {
       set config(value) { config = value; },
       get configTrackerTagNameHint() { return configTrackerTagNameHint; },
       set configTrackerTagNameHint(value) { configTrackerTagNameHint = value; },
-      get latestContent() { return renderState.latestContent; },
-      set latestContent(value) { renderState.latestContent = value; },
-      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
-      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
-      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
       get modelCombobox() { return modelCombobox; },
       set modelCombobox(value) { modelCombobox = value; },
     },
@@ -262,8 +240,8 @@ export function setup(ctx: SpindleFrontendContext) {
     getPresetById,
     isImportedTemplate,
     applyThemeClass,
-    handleContent,
-    handleTrackerPayload,
+    reapplyLatest,
+    readLatestTrackerMessageId: rendering.readLatestTrackerMessageId,
     inlineProcessor,
     setStatus,
     persistConfig,
