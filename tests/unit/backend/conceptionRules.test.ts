@@ -6,7 +6,7 @@ import {
   isAlreadyConceivedOrPregnant,
   isFemaleOrFuta,
   isInFertileWindow,
-} from "../src/backend/conceptionRules";
+} from "../../../src/backend/conceptionRules";
 
 describe("conception rules", () => {
   test("selects object characters and recognizes eligible sex", () => {

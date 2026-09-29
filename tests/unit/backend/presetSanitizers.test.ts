@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sanitizeInlinePacks, sanitizePresetArray, sanitizeSinglePreset } from "../src/backend/presetSanitizers";
+import { sanitizeInlinePacks, sanitizePresetArray, sanitizeSinglePreset } from "../../../src/backend/presetSanitizers";
 
 describe("preset sanitizers", () => {
   test("normalizes imported preset fields and generated IDs", () => {

@@ -185,4 +185,6 @@ bun run typecheck
 bun run lint
 ```
 
-See `AGENTS.md` for the full development reference.
+## Tests
+
+Tests are grouped by scope: `tests/unit/{backend,frontend,shared}` covers focused module behavior, while `tests/integration/{backend,frontend}` exercises Lumiverse-facing flows with a host adapter. Run the complete suite with `bun run test`, or use `bun run test:unit` and `bun run test:integration` separately.

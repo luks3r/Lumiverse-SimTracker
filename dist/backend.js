@@ -14107,9 +14107,16 @@ function createSecondaryGeneration(deps) {
     if (queuedSecondaryJobs.has(key))
       return secondaryGenerationChain;
     queuedSecondaryJobs.add(key);
+    const job = {
+      chatId,
+      messageId,
+      userId: deps.readActiveUserId(),
+      config: { ...deps.readConfig() },
+      preset: getActivePreset()
+    };
     secondaryGenerationChain = secondaryGenerationChain.catch(() => {
       return;
-    }).then(() => generateTrackerWithSecondaryLLM(chatId, messageId)).catch((err) => {
+    }).then(() => generateTrackerWithSecondaryLLM(job)).catch((err) => {
       spindle2.log.error(`Queued secondary LLM generation failed: ${err instanceof Error ? err.message : String(err)}`);
     }).finally(() => {
       queuedSecondaryJobs.delete(key);
@@ -14122,13 +14129,13 @@ function createSecondaryGeneration(deps) {
   function describeRejectedModelGuidance(model) {
     return `The provider rejected the configured model id \`${model}\`. Open SimTracker settings \u2192 Secondary LLM and confirm the override matches a model this connection can serve, or clear the override to fall back to the connection's default.`;
   }
-  async function commitTrackerAppend(chatId, targetMessage, parsed, via) {
-    const trackerBlock = formatTrackerPayload(parsed, deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+  async function commitTrackerAppend(chatId, targetMessage, parsed, via, config, userId) {
+    const trackerBlock = formatTrackerPayload(parsed, config.trackerFormat, config.codeBlockIdentifier);
     const updatedContent = `${targetMessage.content.trimEnd()}
 
 ${trackerBlock}`;
     await spindle2.chat.updateMessage(chatId, targetMessage.id, { content: updatedContent });
-    const lastSimStats = deps.readConfig().trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
+    const lastSimStats = config.trackerFormat === "yaml" ? stringify3(parsed) : JSON.stringify(parsed, null, 2);
     recordChatTracker(chatId, targetMessage.id, lastSimStats);
     pushMacroValues();
     spindle2.log.info(`Tracker append complete via ${via}`);
@@ -14138,10 +14145,11 @@ ${trackerBlock}`;
       messageId: targetMessage.id,
       content: updatedContent,
       via
-    }, deps.readActiveUserId() || undefined);
+    }, userId || undefined);
   }
-  async function generateTrackerWithSecondaryLLM(chatId, targetMessageId) {
-    if (!deps.readConfig().useSecondaryLLM)
+  async function generateTrackerWithSecondaryLLM(job) {
+    const { chatId, messageId: targetMessageId, config, preset, userId } = job;
+    if (!config.useSecondaryLLM)
       return;
     if (!hasPermission("generation")) {
       spindle2.log.warn("Secondary LLM generation requires 'generation' permission");
@@ -14151,8 +14159,8 @@ ${trackerBlock}`;
       spindle2.log.warn("Secondary LLM generation requires 'chat_mutation' permission");
       return;
     }
-    let trimmedModel = (deps.readConfig().secondaryLLMModel || "").trim();
-    spindle2.sendToFrontend({ type: "secondary_generation_started", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+    let trimmedModel = (config.secondaryLLMModel || "").trim();
+    spindle2.sendToFrontend({ type: "secondary_generation_started", chatId, messageId: targetMessageId }, userId || undefined);
     try {
       await rehydrateChatTrackerHistory(chatId);
       const messages = await spindle2.chat.getMessages(chatId);
@@ -14163,26 +14171,25 @@ ${trackerBlock}`;
         return;
       if (extractTrackerPayloadFromMessage(targetMessage.content))
         return;
-      const preset = getActivePreset();
       const systemPrompt = preset.sysPrompt || "";
-      const formatExample = buildExampleTrackerBlock(deps.readConfig().trackerFormat, deps.readConfig().codeBlockIdentifier);
+      const formatExample = buildExampleTrackerBlock(config.trackerFormat, config.codeBlockIdentifier);
       const processedPrompt = systemPrompt.replace(/\{\{sim_format\}\}/g, formatExample);
-      const tagName = sanitizeTagName(deps.readConfig().trackerTagName);
-      const identifier = deps.readConfig().codeBlockIdentifier;
-      const messageCount = deps.readConfig().secondaryLLMMessageCount;
+      const tagName = sanitizeTagName(config.trackerTagName);
+      const identifier = config.codeBlockIdentifier;
+      const messageCount = config.secondaryLLMMessageCount;
       const recentMessages = messages.filter((m) => m.role !== "system").slice(-messageCount);
       const historicalTrackers = collectSecondaryHistory({
-        retainTrackerCount: deps.readConfig().retainTrackerCount,
+        retainTrackerCount: config.retainTrackerCount,
         targetMessageId,
         messages,
         getRecentPayloads: (limit, excludeMessageId) => getRecentChatTrackers(chatId, limit, excludeMessageId).map((entry) => entry.payload),
         extractTrackerPayloadFromMessage
       });
-      if (deps.readConfig().typeSafeEnabled && deps.readConfig().typeSafeQuickAppend && deps.readConfig().typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
+      if (config.typeSafeEnabled && config.typeSafeQuickAppend && config.typeSafeApiKey.trim() && hasPermission("cors_proxy")) {
         const previousPayload = historicalTrackers.length > 0 ? parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]) : null;
         if (previousPayload) {
           let fastLaneMessage = targetMessage.content.replace(buildTrackerTagRegex(tagName, "ig"), "").replace(buildTrackerFenceRegex(identifier, "gi"), "");
-          if (deps.readConfig().secondaryLLMStripHTML)
+          if (config.secondaryLLMStripHTML)
             fastLaneMessage = stripStructuralHTML(fastLaneMessage);
           const fields = (Array.isArray(preset.customFields) ? preset.customFields : []).map((field) => ({
             key: typeof field?.key === "string" ? field.key : "",
@@ -14192,24 +14199,24 @@ ${trackerBlock}`;
           if (plan) {
             let answers = null;
             try {
-              answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: deps.readConfig().typeSafeApiKey.trim(), model: deps.readConfig().typeSafeModel }, plan.state, plan.questions);
+              answers = await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: config.typeSafeApiKey.trim(), model: config.typeSafeModel }, plan.state, plan.questions);
             } catch (err) {
               const detail = err instanceof Error ? err.message : String(err);
               spindle2.log.warn(`TypeSafe fast lane unavailable, falling back to full secondary LLM: ${detail}`);
               await trackEvent("sst.typesafe.error", { stage: "fast-lane", error: detail }, { level: "warn", chatId });
             }
             if (answers) {
-              const gate = interpretGate(answers, deps.readConfig().typeSafeConfidenceFloor);
+              const gate = interpretGate(answers, config.typeSafeConfidenceFloor);
               if (gate === "skip") {
                 spindle2.log.info("TypeSafe gate: no tracker changes warranted for this message");
                 await trackEvent("sst.typesafe.gate_skip", { messageId: targetMessageId }, { chatId });
-                spindle2.sendToFrontend({ type: "secondary_generation_skipped", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+                spindle2.sendToFrontend({ type: "secondary_generation_skipped", chatId, messageId: targetMessageId }, userId || undefined);
                 return;
               }
               if (gate === "fast") {
-                const result2 = applyFastLaneAnswers(previousPayload, plan.directives, answers, deps.readConfig().typeSafeConfidenceFloor);
+                const result2 = applyFastLaneAnswers(previousPayload, plan.directives, answers, config.typeSafeConfidenceFloor);
                 if (result2.changed.length > 0) {
-                  await commitTrackerAppend(chatId, targetMessage, result2.payload, "typesafe-fast-lane");
+                  await commitTrackerAppend(chatId, targetMessage, result2.payload, "typesafe-fast-lane", config, userId);
                   await trackEvent("sst.typesafe.fast_append", { changed: result2.changed }, { chatId });
                   return;
                 }
@@ -14222,16 +14229,16 @@ ${trackerBlock}`;
       if (!hasPermission("generation_parameters")) {
         const guidance = "Secondary LLM generation requires the 'generation_parameters' permission so the configured model id reaches the provider. Grant it in SimTracker's permission prompt and try again.";
         spindle2.log.warn(guidance);
-        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, userId || undefined);
         return;
       }
-      const connections = await spindle2.connections.list(deps.readActiveUserId() || undefined);
-      const route = resolveSecondaryConnection(connections, deps.readConfig().secondaryLLMConnectionId, trimmedModel);
+      const connections = await spindle2.connections.list(userId || undefined);
+      const route = resolveSecondaryConnection(connections, config.secondaryLLMConnectionId, trimmedModel);
       trimmedModel = route.model;
       if (!route.ok) {
         const guidance = route.reason === "provider" ? "Secondary LLM connection has no usable provider. Select a configured connection in SimTracker settings and try again." : describeMissingModelGuidance();
         spindle2.log.warn(guidance);
-        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId }, userId || undefined);
         return;
       }
       const { connection, provider } = route;
@@ -14241,23 +14248,23 @@ ${trackerBlock}`;
         recentMessages,
         tagName,
         identifier,
-        stripHTML: deps.readConfig().secondaryLLMStripHTML,
-        trackerFormat: deps.readConfig().trackerFormat
+        stripHTML: config.secondaryLLMStripHTML,
+        trackerFormat: config.trackerFormat
       });
       const llmMessages = [
         { role: "user", content: conversationText }
       ];
       const parameters = {
         model: trimmedModel,
-        temperature: deps.readConfig().secondaryLLMTemperature
+        temperature: config.secondaryLLMTemperature
       };
-      spindle2.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${deps.readConfig().secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
+      spindle2.log.info(`Secondary LLM request \u2192 chat=${chatId} target=${targetMessageId} connection=${connection.id} model=${trimmedModel} temperature=${config.secondaryLLMTemperature} history=${historicalTrackers.length} contextMessages=${cleanedMessages.length}`);
       const generationRequest = {
         type: "raw",
         messages: llmMessages,
         parameters,
         connection_id: connection.id,
-        userId: deps.readActiveUserId() || undefined,
+        userId: userId || undefined,
         provider,
         model: trimmedModel
       };
@@ -14266,7 +14273,7 @@ ${trackerBlock}`;
       const generatedText = typeof resultObj.content === "string" ? resultObj.content : "";
       if (!generatedText) {
         spindle2.log.warn("Secondary LLM returned empty response");
-        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId }, userId || undefined);
         return;
       }
       let parsed = parseGeneratedTrackerPayload(generatedText);
@@ -14277,7 +14284,7 @@ ${trackerBlock}`;
           messages: [
             {
               role: "system",
-              content: `Repair the supplied tracker as ${deps.readConfig().trackerFormat.toUpperCase()} syntax. Preserve all existing fields and values. Do not add explanations, code fences, or XML tags. Return only the complete corrected document.`
+              content: `Repair the supplied tracker as ${config.trackerFormat.toUpperCase()} syntax. Preserve all existing fields and values. Do not add explanations, code fences, or XML tags. Return only the complete corrected document.`
             },
             { role: "user", content: generatedText }
           ]
@@ -14288,10 +14295,10 @@ ${trackerBlock}`;
       }
       if (!parsed) {
         spindle2.log.warn("Secondary LLM response and repair could not be parsed as valid tracker data");
-        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+        spindle2.sendToFrontend({ type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId }, userId || undefined);
         return;
       }
-      if (deps.readConfig().typeSafeEnabled && deps.readConfig().typeSafeVerify && deps.readConfig().typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
+      if (config.typeSafeEnabled && config.typeSafeVerify && config.typeSafeApiKey.trim() && hasPermission("cors_proxy") && historicalTrackers.length > 0) {
         const previousPayload = parseTrackerPayload(historicalTrackers[historicalTrackers.length - 1]);
         const narrative = cleanedMessages.map((msg) => `${msg.role === "user" ? "User" : "Character"}: ${msg.content}`).join(`
 
@@ -14299,11 +14306,11 @@ ${trackerBlock}`;
         const verifyPlan = previousPayload ? buildVerifyPlan({ narrative, previousPayload, generatedPayload: parsed }) : null;
         if (verifyPlan) {
           try {
-            const verdict = interpretVerifyAnswers(await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: deps.readConfig().typeSafeApiKey.trim(), model: deps.readConfig().typeSafeModel }, verifyPlan.state, verifyPlan.questions));
+            const verdict = interpretVerifyAnswers(await evaluateTypeSafe(typeSafeCorsTransport, { apiKey: config.typeSafeApiKey.trim(), model: config.typeSafeModel }, verifyPlan.state, verifyPlan.questions));
             if (!verdict.ok) {
               const message = `TypeSafe verification rejected the generated tracker: ${verdict.reasons.join("; ")}`;
               spindle2.log.warn(message);
-              spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+              spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, userId || undefined);
               await trackEvent("sst.typesafe.verify_reject", { reasons: verdict.reasons }, { level: "warn", chatId });
               return;
             }
@@ -14315,10 +14322,10 @@ ${trackerBlock}`;
           }
         }
       }
-      await commitTrackerAppend(chatId, targetMessage, parsed, "secondary-llm");
+      await commitTrackerAppend(chatId, targetMessage, parsed, "secondary-llm", config, userId);
       await trackEvent("sst.secondary_generation.complete", {
-        connectionId: deps.readConfig().secondaryLLMConnectionId,
-        model: deps.readConfig().secondaryLLMModel
+        connectionId: config.secondaryLLMConnectionId,
+        model: config.secondaryLLMModel
       }, { chatId });
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : String(err);
@@ -14327,7 +14334,7 @@ ${trackerBlock}`;
 
 ${describeRejectedModelGuidance(trimmedModel)}` : rawMessage;
       spindle2.log.error(`Secondary LLM generation failed: ${rawMessage}`);
-      spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, deps.readActiveUserId() || undefined);
+      spindle2.sendToFrontend({ type: "secondary_generation_error", message, chatId, messageId: targetMessageId }, userId || undefined);
       await trackEvent("sst.secondary_generation.failed", { error: rawMessage }, { level: "error" });
     }
   }

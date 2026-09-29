@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { calculateStatChanges, normalizeCharacters } from "../src/frontend/trackerViewData";
+import { calculateStatChanges, normalizeCharacters } from "../../../src/frontend/trackerViewData";
 
 describe("tracker view data", () => {
   test("keeps modern characters and converts legacy maps", () => {

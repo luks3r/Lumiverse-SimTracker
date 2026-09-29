@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFrontendMessageSyntax, readMessageContext } from "../src/frontend/frontendMessageSyntax";
+import { createFrontendMessageSyntax, readMessageContext } from "../../../src/frontend/frontendMessageSyntax";
 
 describe("frontend message syntax", () => {
   test("reads configured tag and updates after tag changes", () => {

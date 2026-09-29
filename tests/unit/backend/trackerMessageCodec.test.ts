@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createTrackerMessageCodec } from "../src/backend/trackerMessageCodec";
+import { createTrackerMessageCodec } from "../../../src/backend/trackerMessageCodec";
 
 describe("tracker message codec", () => {
   test("normalizes legacy hidden divs without losing tracker data", () => {

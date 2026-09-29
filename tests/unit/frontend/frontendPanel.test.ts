@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_PANEL_STATUS, PANEL_CSS, PANEL_HTML } from "../src/frontend/frontendPanel";
+import { DEFAULT_PANEL_STATUS, PANEL_CSS, PANEL_HTML } from "../../../src/frontend/frontendPanel";
 
 describe("frontend panel assets", () => {
   test("keeps key controls and unique IDs", () => {

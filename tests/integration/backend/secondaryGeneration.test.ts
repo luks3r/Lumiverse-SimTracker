@@ -31,12 +31,14 @@ let selectedConnectionId = "conn-1";
 let selectedModelOverride = "";
 let trackerFormat: "json" | "yaml" = "json";
 let retainTrackerCount = 0;
+let frontendHandler: ((payload: unknown, userId: string) => Promise<void>) | null = null;
+let generationGate: Promise<void> | null = null;
 
 const spindle = {
   frontendCapabilities: { declare: () => () => {} },
   log: { info: () => {}, warn: () => {}, error: () => {} },
   on: (event: string, handler: (payload: unknown, userId?: string) => void) => { handlers.set(event, handler); },
-  onFrontendMessage: () => {},
+  onFrontendMessage: (handler: typeof frontendHandler) => { frontendHandler = handler; },
   registerMacro: () => {},
   updateMacroValue: () => {},
   sendToFrontend: (message: Record<string, unknown>) => {
@@ -60,6 +62,7 @@ const spindle = {
       typeSafeEnabled: false,
     }),
   },
+  storage: { exists: async () => false },
   enclave: { get: async () => "" },
   connections: {
     list: async () => [{ id: "conn-1", provider: connectionProvider, model: connectionModel, is_default: true }],
@@ -75,6 +78,7 @@ const spindle = {
   generate: {
     raw: async (request: GenerationRequest) => {
       requests.push(request);
+      if (generationGate) await generationGate;
       if (!request.provider) throw new Error(`Unknown provider: ${request.provider ?? ""}`);
       if (!request.connection_id) throw new Error("No API key provided. Pass api_key or connection_id in the request.");
       const content = outputs.shift();
@@ -86,7 +90,7 @@ const spindle = {
 
 beforeAll(async () => {
   (globalThis as { spindle?: unknown }).spindle = spindle;
-  await import("../src/backend");
+  await import("../../../src/backend");
 });
 
 let nextChatId = 0;
@@ -138,6 +142,53 @@ async function runGeneration(
 }
 
 describe("secondary generation flow", () => {
+  test("queued jobs keep the model selected when they were requested", async () => {
+    if (!frontendHandler) throw new Error("Frontend handler missing");
+    const send = frontendHandler;
+    const userId = "queued-user";
+    const payload = '{"worldData":{},"characters":[]}';
+    const first = { id: "queued-first", role: "assistant" as const, content: "First beat", swipes: [], swipe_id: 0, swipe_dates: [], extra: {} };
+    const second = { id: "queued-second", role: "assistant" as const, content: "Second beat", swipes: [], swipe_id: 0, swipe_dates: [], extra: {} };
+    chats.set("queued-chat-1", [first]);
+    chats.set("queued-chat-2", [second]);
+    requests.length = 0;
+    notifications.length = 0;
+    outputs.splice(0, outputs.length, payload, payload);
+    selectedConnectionId = "conn-1";
+    connectionProvider = "openai";
+    connectionModel = "connection-default";
+    selectedModelOverride = "model-A";
+    trackerFormat = "json";
+    retainTrackerCount = 0;
+    await send({ type: "get_config" }, userId);
+
+    let releaseGeneration!: () => void;
+    generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
+    try {
+      await send({ type: "trigger_secondary_generation", chatId: "queued-chat-1", messageId: first.id }, userId);
+      for (let attempt = 0; attempt < 100 && requests.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(requests).toHaveLength(1);
+
+      await send({ type: "trigger_secondary_generation", chatId: "queued-chat-2", messageId: second.id }, userId);
+      selectedModelOverride = "model-B";
+      await send({ type: "get_config" }, userId);
+      releaseGeneration();
+      for (let attempt = 0; attempt < 100 && requests.length < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(requests.map((request) => request.model)).toEqual(["model-A", "model-A"]);
+      for (let attempt = 0; attempt < 100 && notifications.filter((message) => message.type === "secondary_generation_complete").length < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(notifications.filter((message) => message.type === "secondary_generation_complete")).toHaveLength(2);
+    } finally {
+      releaseGeneration();
+      generationGate = null;
+    }
+  });
+
   test("uses selected connection model and appends valid output", async () => {
     const { result, message } = await runGeneration(['{"worldData":{},"characters":[{"name":"Alice","ap":75}]}']);
 

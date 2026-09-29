@@ -12,7 +12,7 @@ import {
   percentOf,
   vagDepthBar,
   vagShaftTopY,
-} from "../src/frontend/frontendBiology";
+} from "../../../src/frontend/frontendBiology";
 
 describe("frontend biology helpers", () => {
   test("resolves stage IDs and legacy stage names", () => {

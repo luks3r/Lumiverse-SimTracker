@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createTrackerMessageCodec } from "../src/backend/trackerMessageCodec";
-import { createTrackerPromptRetention } from "../src/backend/trackerPromptRetention";
+import { createTrackerMessageCodec } from "../../../src/backend/trackerMessageCodec";
+import { createTrackerPromptRetention } from "../../../src/backend/trackerPromptRetention";
 
 describe("tracker prompt retention", () => {
   test("keeps newest tracker across messages", () => {

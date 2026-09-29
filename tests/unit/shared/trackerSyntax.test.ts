@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildTrackerFenceRegex, extractSimBlock, extractTrackerTag, sanitizeIdentifier, sanitizeTagName } from "../src/shared/trackerSyntax";
+import { buildTrackerFenceRegex, extractSimBlock, extractTrackerTag, sanitizeIdentifier, sanitizeTagName } from "../../../src/shared/trackerSyntax";
 
 describe("tracker message syntax", () => {
   test("reads matching tag type and ignores other tags", () => {

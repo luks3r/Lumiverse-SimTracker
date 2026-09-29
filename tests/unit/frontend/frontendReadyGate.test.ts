@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
-import { createReadyGate } from "../src/frontend/frontendReadyGate";
+import { createReadyGate } from "../../../src/frontend/frontendReadyGate";
 
 describe("frontend ready gate", () => {
   test("releases once after supported host version resolves", async () => {

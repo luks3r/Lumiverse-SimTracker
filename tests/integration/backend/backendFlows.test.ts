@@ -61,7 +61,7 @@ const spindle = {
 
 beforeAll(async () => {
   (globalThis as { spindle?: unknown }).spindle = spindle;
-  await import("../src/backend/index.ts?backend-flows");
+  await import("../../../src/backend/index.ts?backend-flows");
 });
 
 async function sendFrontend(message: FrontendMessage, userId = "flow-user") {
