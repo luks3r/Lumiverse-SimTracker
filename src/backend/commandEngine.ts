@@ -44,7 +44,7 @@ export function createCommandEngine(deps: {
     return replaceBlockWithTag(content, identifier, replacementBlock, deps.readConfig().trackerTagName);
   }
 
-  function buildCommandResponse(payload: CommandResultPayload): { type: string; payload: CommandResultPayload } {
+  function buildCommandResponse(payload: CommandResultPayload): { type: "command_result"; payload: CommandResultPayload } {
     return { type: "command_result", payload };
   }
 
@@ -163,7 +163,7 @@ export function createCommandEngine(deps: {
     };
   }
 
-  async function handleSlashCommand(content: string, ctx: MessageContext): Promise<{ type: string; payload: CommandResultPayload } | null> {
+  async function handleSlashCommand(content: string, ctx: MessageContext): Promise<{ type: "command_result"; payload: CommandResultPayload } | null> {
     const trimmed = content.trim();
     if (!trimmed.startsWith("/sst-")) return null;
 

@@ -1,11 +1,10 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import type { TemplatePreset } from "../shared/templatePresets";
 import { DEFAULT_CONFIG, FERTILITY_CYCLE_BIAS_VALUES, type FertilityCycleBias, type TrackerConfig } from "../shared/trackerConfig";
-import { parseTrackerBlock, type TrackerData } from "../shared/trackerData";
 import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { CONFIG_ERROR_STATUS_PREFIX, DEFAULT_PANEL_STATUS } from "./frontendPanel";
 import type { ConnectionProfile } from "./frontendControls";
-import type { PendingTrackerPayload } from "./trackerRendering";
+import type { TrackerHydration } from "./trackerHydration";
 import { readWireMessage } from "../shared/wireMessages";
 
 export function registerBackendMessages(deps: {
@@ -18,23 +17,17 @@ export function registerBackendMessages(deps: {
     grantedPermissions: string[];
     requestedPermissions: string[];
     ephemeralPoolStatus: Record<string, unknown> | null;
-    currentChatId: string | null;
-    awaitingLatestTrackerChatId: string | null;
-    pendingTrackerPayload: PendingTrackerPayload | null;
     configReady: boolean;
     configRetryTimer: ReturnType<typeof setTimeout> | null;
     latestContent: string | null;
     latestTrackerMessageId: string | null;
     latestTrackerRaw: string | null;
     latestTrackerSourceContent: string | null;
-    latestTrackerRequestsInFlight: Set<string>;
-    trackerMessageIds: Set<string>;
-    trackerComparisonBaselines: Map<string, TrackerData | null>;
   };
+  hydration: TrackerHydration;
   panelHost: { setSeededPresets: (presets: TemplatePreset[]) => void };
   applyHideStyle: () => void;
   applyTagInterceptor: () => void;
-  requestInitialTrackerRehydrate: () => void;
   showCommandResult: (payload: Record<string, unknown>) => void;
   setStatus: (text: string) => void;
   isImportedTemplate: (config: TrackerConfig, id: string) => boolean;
@@ -44,7 +37,6 @@ export function registerBackendMessages(deps: {
   showGeneratingIndicator: (messageId: string) => void;
   hideGeneratingIndicator: (messageId: string) => void;
   handleContent: (content: string, messageId: string | null) => void;
-  flushPendingTrackerPayload: () => void;
   renderCapabilities: (granted: string[], requested: string[], ephemeral: Record<string, unknown> | null) => void;
   updatePermissionGatedControls: () => void;
   syncControls: () => void;
@@ -56,10 +48,10 @@ export function registerBackendMessages(deps: {
 }) {
   const {
     ctx, byId, state, panelHost, applyHideStyle, applyTagInterceptor,
-    requestInitialTrackerRehydrate, showCommandResult, setStatus,
+    hydration, showCommandResult, setStatus,
     isImportedTemplate, populateConnectionDropdown, setLLMStatus,
     isActivityForActiveChat, showGeneratingIndicator, hideGeneratingIndicator,
-    handleContent, flushPendingTrackerPayload, renderCapabilities,
+    handleContent, renderCapabilities,
     updatePermissionGatedControls, syncControls, applyThemeClass, getPresetById,
     handleTrackerPayload, shouldResetStatusAfterConfigLoad, inlineProcessor,
   } = deps;
@@ -82,7 +74,7 @@ export function registerBackendMessages(deps: {
       state.configTrackerTagNameHint = state.config.trackerTagName;
       applyHideStyle();
       applyTagInterceptor();
-      requestInitialTrackerRehydrate();
+      hydration.requestInitial();
       return;
     }
     if (obj?.type === "command_result" && obj.payload && typeof obj.payload === "object") {
@@ -169,40 +161,8 @@ export function registerBackendMessages(deps: {
     }
     if (obj?.type === "tracker_history_latest") {
       const responseChatId = typeof obj.chatId === "string" ? obj.chatId : null;
-      if (responseChatId) state.latestTrackerRequestsInFlight.delete(responseChatId);
-      if (responseChatId && state.currentChatId && responseChatId !== state.currentChatId) return;
-      if (!state.currentChatId && responseChatId) state.currentChatId = responseChatId;
-      if (!responseChatId || state.awaitingLatestTrackerChatId === responseChatId) {
-        state.awaitingLatestTrackerChatId = null;
-      }
       const entry = obj.entry as { messageId?: unknown; payload?: unknown; previousPayload?: unknown } | null;
-      if (entry && typeof entry.payload === "string" && entry.payload.trim()) {
-        const msgId = typeof entry.messageId === "string" ? entry.messageId : null;
-        // Hydration safety net: only useful when the latest tracker-bearing
-        // message wasn't reprocessed through a live frontend event yet. If
-        // we already handled that messageId, skip — otherwise we'd flash the
-        // message-level render with `previousData` now equal to the latest
-        // data (no diffs).
-        if (msgId && state.trackerMessageIds.has(msgId)) {
-          state.pendingTrackerPayload = null;
-          return;
-        }
-        if (msgId) {
-          const previous = typeof entry.previousPayload === "string"
-            ? parseTrackerBlock(entry.previousPayload)
-            : null;
-          state.trackerComparisonBaselines.clear();
-          state.trackerComparisonBaselines.set(msgId, previous);
-        }
-        state.pendingTrackerPayload = {
-          raw: entry.payload,
-          sourceContent: entry.payload,
-          messageId: msgId,
-          chatId: responseChatId,
-          authoritative: true,
-        };
-      }
-      flushPendingTrackerPayload();
+      hydration.acceptLatest(responseChatId, entry);
       return;
     }
     if (obj?.type === "permission_changed") {
@@ -282,8 +242,8 @@ export function registerBackendMessages(deps: {
     if (shouldResetStatusAfterConfigLoad()) {
       setStatus(DEFAULT_PANEL_STATUS);
     }
-    requestInitialTrackerRehydrate();
-    flushPendingTrackerPayload();
+    hydration.requestInitial();
+    hydration.flushPending();
     inlineProcessor.processAll();
   });
   return backendUnsub;

@@ -4,6 +4,7 @@ import { sanitizeIdentifier, sanitizeTagName } from "../shared/trackerSyntax";
 import { readMessageContext } from "./backendMessageContext";
 import type { createCommandEngine } from "./commandEngine";
 import { runHostEventTask } from "./hostEventTask";
+import type { BackendToFrontendMessage } from "../shared/wireMessages";
 
 export function registerMessageEvents(deps: {
   spindle: SpindleAPI;
@@ -44,7 +45,7 @@ spindle.on("MESSAGE_SENT", (payload: unknown, userId?: string) => {
 
     const commandResult = await handleSlashCommand(message, ctx);
     if (commandResult) {
-      spindle.sendToFrontend(commandResult, deps.readActiveUserId() || undefined);
+      spindle.sendToFrontend(commandResult satisfies BackendToFrontendMessage, deps.readActiveUserId() || undefined);
       await trackEvent(
         "sst.command.result",
         {

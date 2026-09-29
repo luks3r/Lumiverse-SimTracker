@@ -1,6 +1,7 @@
 import type { SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
 import type { TrackerConfig } from "../shared/trackerConfig";
-import type { PendingTrackerPayload } from "./trackerRendering";
+import type { TrackerHydration } from "./trackerHydration";
+import type { FrontendToBackendMessage } from "../shared/wireMessages";
 
 export type ConnectionProfile = {
   id: string;
@@ -19,16 +20,14 @@ export function createFrontendControls(deps: {
     removeTagInterceptor: (() => void) | null;
     tagInterceptorSignature: string | null;
     modelCombobox: SpindleModelComboboxHandle | null;
-    pendingTrackerPayload: PendingTrackerPayload | null;
   };
+  hydration: TrackerHydration;
   readConfig: () => TrackerConfig;
   writeConfig: (config: TrackerConfig) => void;
   readConnections: () => ConnectionProfile[];
   readGrantedPermissions: () => string[];
-  readCurrentChatId: () => string | null;
   readLatestTrackerMessageId: () => string | null;
   isConfigReady: () => boolean;
-  readAwaitingLatestTrackerChatId: () => string | null;
   isActivityForActiveChat: (chatId: string | null) => boolean;
   handleTrackerPayload: (raw: string, sourceContent: string, messageId: string | null) => void;
   mountTemplateOptions: (config: TrackerConfig) => void;
@@ -103,7 +102,7 @@ export function createFrontendControls(deps: {
     if (!btn) return;
     const llmAvailable =
       hasPermission("generation") && hasPermission("chat_mutation") && hasPermission("generation_parameters");
-    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.readCurrentChatId());
+    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
     btn.title = btn.disabled
       ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled"
       : deps.readLatestTrackerMessageId()
@@ -163,18 +162,16 @@ export function createFrontendControls(deps: {
         // Initial chat hydration may mount dozens of historical tracker tags.
         // They still get stripped, but only the backend-selected latest match
         // is parsed/rendered and bridged back after rehydration.
-        if (!deps.isConfigReady() || (!!payloadChatId && deps.readAwaitingLatestTrackerChatId() === payloadChatId)) {
+        if (!deps.isConfigReady() || (!!payloadChatId && deps.hydration.awaitingChatId() === payloadChatId)) {
           // A late historical mount must not replace the backend-selected
           // latest entry if that response won the race with full deps.readConfig().
-          if (!state.pendingTrackerPayload?.authoritative) {
-            state.pendingTrackerPayload = {
+          deps.hydration.offerPending({
               raw: payload.content,
               sourceContent,
               messageId,
               chatId: payloadChatId || null,
               authoritative: false,
-            };
-          }
+          });
           return;
         }
         deps.handleTrackerPayload(
@@ -190,7 +187,7 @@ export function createFrontendControls(deps: {
           messageId: payload.messageId,
           chatId: payload.chatId,
           isStreaming: payload.isStreaming,
-        });
+        } satisfies FrontendToBackendMessage);
       },
     );
     state.tagInterceptorSignature = signature;
@@ -279,7 +276,7 @@ export function createFrontendControls(deps: {
       toggleInput.type = "checkbox";
       toggleInput.checked = enabled;
       toggleInput.addEventListener("change", () => {
-        ctx.sendToBackend({ type: "toggle_inline_pack", index: i, enabled: toggleInput.checked });
+        ctx.sendToBackend({ type: "toggle_inline_pack", index: i, enabled: toggleInput.checked } satisfies FrontendToBackendMessage);
       });
       const toggleText = document.createElement("span");
       toggleText.textContent = "Enabled";
@@ -290,7 +287,7 @@ export function createFrontendControls(deps: {
       removeBtn.className = "sst-lumi-pack-remove";
       removeBtn.textContent = "Remove";
       removeBtn.addEventListener("click", () => {
-        ctx.sendToBackend({ type: "remove_inline_pack", index: i });
+        ctx.sendToBackend({ type: "remove_inline_pack", index: i } satisfies FrontendToBackendMessage);
       });
 
       row.append(info, toggleLabel, removeBtn);

@@ -2,7 +2,7 @@ import type { SpindleAPI } from "lumiverse-spindle-types";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { mergeTrackerConfig } from "./backendConfig";
 import { buildTrackerFenceRegex, buildTrackerTagRegex, sanitizeTagName } from "../shared/trackerSyntax";
-import { readWireMessage, readWireRecord } from "../shared/wireMessages";
+import { readWireMessage, readWireRecord, type BackendToFrontendMessage } from "../shared/wireMessages";
 
 export function createFrontendMessageHandler(deps: {
   spindle: SpindleAPI;
@@ -95,7 +95,7 @@ return async (payload: unknown, userId: string) => {
         useSecondaryLLM: config.useSecondaryLLM,
       });
       await sendConfigState(userId);
-      spindle.sendToFrontend({ type: "config_saved" }, userId);
+      spindle.sendToFrontend({ type: "config_saved" } satisfies BackendToFrontendMessage, userId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       spindle.log.error(`set_config handler failed for user ${userId}: ${msg}`);
@@ -111,18 +111,18 @@ return async (payload: unknown, userId: string) => {
         type: "connections_list",
         connections: [],
         error: "Generation permission not granted",
-      }, userId);
+      } satisfies BackendToFrontendMessage, userId);
       return;
     }
     try {
       spindle.log.info(`get_connections: requesting with userId=${userId || "(none)"}`);
       const connections = await spindle.connections.list(userId || undefined);
       spindle.log.info(`get_connections: received ${connections?.length ?? 0} connection(s)`);
-      spindle.sendToFrontend({ type: "connections_list", connections: connections ?? [] }, userId);
+      spindle.sendToFrontend({ type: "connections_list", connections: connections ?? [] } satisfies BackendToFrontendMessage, userId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       spindle.log.error(`get_connections failed: ${msg}`);
-      spindle.sendToFrontend({ type: "connections_list", connections: [], error: msg }, userId);
+      spindle.sendToFrontend({ type: "connections_list", connections: [], error: msg } satisfies BackendToFrontendMessage, userId);
     }
     return;
   }
@@ -142,7 +142,7 @@ return async (payload: unknown, userId: string) => {
     if (!chatId) return;
     if (!hasPermission("chat_mutation")) {
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: "Regenerate requires 'chat_mutation' permission" },
+        { type: "secondary_generation_error", message: "Regenerate requires 'chat_mutation' permission" } satisfies BackendToFrontendMessage,
         userId,
       );
       return;
@@ -165,7 +165,7 @@ return async (payload: unknown, userId: string) => {
     }
     if (!target) {
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: "No assistant message was found in this chat to regenerate." },
+        { type: "secondary_generation_error", message: "No assistant message was found in this chat to regenerate." } satisfies BackendToFrontendMessage,
         userId,
       );
       return;
@@ -191,7 +191,7 @@ return async (payload: unknown, userId: string) => {
     const chatId = typeof message.chatId === "string" ? message.chatId : null;
     if (!chatId) {
       if (!deps.isSelectedChatKnown()) selectChat(null);
-      spindle.sendToFrontend({ type: "tracker_history_latest", chatId: null, entry: null }, userId);
+      spindle.sendToFrontend({ type: "tracker_history_latest", chatId: null, entry: null } satisfies BackendToFrontendMessage, userId);
       return;
     }
     // A lookup can arrive after a chat switch; only use it to identify the
@@ -212,7 +212,7 @@ return async (payload: unknown, userId: string) => {
             previousPayload: previousEntry?.payload || null,
           }
         : null,
-    }, userId);
+    } satisfies BackendToFrontendMessage, userId);
     return;
   }
 
@@ -251,7 +251,7 @@ return async (payload: unknown, userId: string) => {
     const templateId = typeof message.templateId === "string" ? message.templateId : "";
     const preset = config.userPresets.find((item) => item.id === templateId);
     if (!preset) {
-      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: "Only imported templates can be deleted." }, userId);
+      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: "Only imported templates can be deleted." } satisfies BackendToFrontendMessage, userId);
       return;
     }
     const previousConfig = config;
@@ -268,12 +268,12 @@ return async (payload: unknown, userId: string) => {
       deps.writeConfig(config);
       const detail = err instanceof Error ? err.message : String(err);
       spindle.log.error(`delete_preset failed: ${detail}`);
-      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: `Could not delete template: ${detail}` }, userId);
+      spindle.sendToFrontend({ type: "delete_preset_result", ok: false, message: `Could not delete template: ${detail}` } satisfies BackendToFrontendMessage, userId);
       return;
     }
     pushMacroValues();
     await sendConfigState(userId);
-    spindle.sendToFrontend({ type: "delete_preset_result", ok: true, message: `Deleted template: ${preset.templateName}` }, userId);
+    spindle.sendToFrontend({ type: "delete_preset_result", ok: true, message: `Deleted template: ${preset.templateName}` } satisfies BackendToFrontendMessage, userId);
     return;
   }
 

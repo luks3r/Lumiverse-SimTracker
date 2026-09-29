@@ -1,9 +1,8 @@
-import type { SpindleAppMountHandle, SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
-import type { TemplatePreset } from "../shared/templatePresets";
-import type { TrackerData } from "../shared/trackerData";
+import type { SpindleFrontendContext, SpindleModelComboboxHandle } from "lumiverse-spindle-types";
+import { parseTrackerBlock } from "../shared/trackerData";
 import { createReadyGate } from "./frontendReadyGate";
-import type { TrackerMountMode } from "./frontendTemplate";
 import { createTrackerRendering } from "./trackerRendering";
+import { createTrackerRenderState } from "./trackerRenderState";
 import { LOADING_CONFIG_STATUS, PANEL_CSS, PANEL_HTML } from "./frontendPanel";
 import { createPanelHost } from "./panelHost";
 import { createFrontendControls, type ConnectionProfile } from "./frontendControls";
@@ -14,6 +13,8 @@ import { registerTemplateHelpers } from "./frontendTemplateHelpers";
 import { createInlineTemplateProcessor } from "./inlineTemplates";
 import { DEFAULT_CONFIG, type TrackerConfig } from "../shared/trackerConfig";
 import { createFrontendMessageSyntax } from "./frontendMessageSyntax";
+import type { FrontendToBackendMessage } from "../shared/wireMessages";
+import { createTrackerHydration } from "./trackerHydration";
 
 export function setup(ctx: SpindleFrontendContext) {
   const panelHost = createPanelHost();
@@ -44,38 +45,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let removeHideStyle: (() => void) | null = null;
   let removeTagInterceptor: (() => void) | null = null;
   let tagInterceptorSignature: string | null = null;
-  let previousTrackerData: TrackerData | null = null;
-  let latestContent: string | null = null;
-  let latestTrackerMessageId: string | null = null;
-  let latestTrackerRaw: string | null = null;
-  let latestTrackerSourceContent: string | null = null;
+  const renderState = createTrackerRenderState();
   let configReady = false;
-  let pendingTrackerPayload: {
-    raw: string;
-    sourceContent: string;
-    messageId: string | null;
-    chatId: string | null;
-    authoritative: boolean;
-  } | null = null;
-  let awaitingLatestTrackerChatId: string | null = null;
-  let initialTrackerRehydrateRequested = false;
-  const latestTrackerRequestsInFlight = new Set<string>();
-  const trackerMessageIds = new Set<string>();
-  const trackerMessageMounts = new Map<string, Element>();
-  type TrackerRenderInputs = {
-    data: TrackerData;
-    preset: TemplatePreset;
-    previousData: TrackerData | null;
-    mode: TrackerMountMode;
-  };
-  type LatestMessageRenderIntent = TrackerRenderInputs & { messageId: string };
-  const trackerMessageRenders = new Map<string, TrackerRenderInputs>();
-  // Streaming may deliver the same message's tracker several times. Freeze
-  // its baseline so final-chunk re-renders do not compare the payload to itself.
-  const trackerComparisonBaselines = new Map<string, TrackerData | null>();
-  const trackerGeneratingIndicators = new Map<string, Element>();
-  let latestMessageRenderIntent: LatestMessageRenderIntent | null = null;
-  let pendingGeneratingIndicatorMessageId: string | null = null;
   const inlineProcessor = createInlineTemplateProcessor({
     getConfig: () => ({
       enableInlineTemplates: config.enableInlineTemplates,
@@ -83,14 +54,22 @@ export function setup(ctx: SpindleFrontendContext) {
     }),
     getPreset: () => getPresetById(config, config.templateId),
   });
-  let sideTrackerMount: Element | null = null;
-  let sideAppMount: { mount: SpindleAppMountHandle; side: string } | null = null;
   let grantedPermissions: string[] = [];
   let requestedPermissions: string[] = [];
   let ephemeralPoolStatus: Record<string, unknown> | null = null;
   let connections: ConnectionProfile[] = [];
   let modelCombobox: SpindleModelComboboxHandle | null = null;
-  let currentChatId: string | null = null;
+  const hydration = createTrackerHydration({
+    getActiveChatId: () => ctx.getActiveChat()?.chatId || null,
+    sendLatestRequest: (chatId) => ctx.sendToBackend({ type: "get_latest_tracker", chatId } satisfies FrontendToBackendMessage),
+    isConfigReady: () => configReady,
+    hasRenderedMessage: (messageId) => renderState.trackerMessageIds.has(messageId),
+    setComparisonBaseline: (messageId, previousPayload) => {
+      renderState.trackerComparisonBaselines.clear();
+      renderState.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
+    },
+    renderPayload: (payload) => handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId),
+  });
 
   const removePanelStyle = ctx.dom.addStyle(PANEL_CSS);
   const mountRoot = ctx.ui.mount("settings_extensions");
@@ -127,17 +106,14 @@ export function setup(ctx: SpindleFrontendContext) {
       set tagInterceptorSignature(value) { tagInterceptorSignature = value; },
       get modelCombobox() { return modelCombobox; },
       set modelCombobox(value) { modelCombobox = value; },
-      get pendingTrackerPayload() { return pendingTrackerPayload; },
-      set pendingTrackerPayload(value) { pendingTrackerPayload = value; },
     },
+    hydration,
     readConfig: () => config,
     writeConfig: (value) => { config = value; },
     readConnections: () => connections,
     readGrantedPermissions: () => grantedPermissions,
-    readCurrentChatId: () => currentChatId,
-    readLatestTrackerMessageId: () => latestTrackerMessageId,
+    readLatestTrackerMessageId: () => renderState.latestTrackerMessageId,
     isConfigReady: () => configReady,
-    readAwaitingLatestTrackerChatId: () => awaitingLatestTrackerChatId,
     isActivityForActiveChat: (chatId) => isActivityForActiveChat(chatId),
     handleTrackerPayload: (raw, sourceContent, messageId) => handleTrackerPayload(raw, sourceContent, messageId),
     mountTemplateOptions,
@@ -158,36 +134,10 @@ export function setup(ctx: SpindleFrontendContext) {
   } = createTrackerRendering({
     ctx,
     byId,
-    state: {
-      get previousTrackerData() { return previousTrackerData; },
-      set previousTrackerData(value) { previousTrackerData = value; },
-      get latestContent() { return latestContent; },
-      set latestContent(value) { latestContent = value; },
-      get latestTrackerMessageId() { return latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { latestTrackerMessageId = value; },
-      get latestTrackerRaw() { return latestTrackerRaw; },
-      set latestTrackerRaw(value) { latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { latestTrackerSourceContent = value; },
-      get pendingTrackerPayload() { return pendingTrackerPayload; },
-      set pendingTrackerPayload(value) { pendingTrackerPayload = value; },
-      trackerMessageIds,
-      trackerMessageMounts,
-      trackerMessageRenders,
-      trackerComparisonBaselines,
-      trackerGeneratingIndicators,
-      get latestMessageRenderIntent() { return latestMessageRenderIntent; },
-      set latestMessageRenderIntent(value) { latestMessageRenderIntent = value; },
-      get pendingGeneratingIndicatorMessageId() { return pendingGeneratingIndicatorMessageId; },
-      set pendingGeneratingIndicatorMessageId(value) { pendingGeneratingIndicatorMessageId = value; },
-      get sideTrackerMount() { return sideTrackerMount; },
-      set sideTrackerMount(value) { sideTrackerMount = value; },
-      get sideAppMount() { return sideAppMount; },
-      set sideAppMount(value) { sideAppMount = value; },
-    },
+    state: renderState,
+    hydration,
     readConfig: () => config,
     isConfigReady: () => configReady,
-    readCurrentChatId: () => currentChatId,
     getPresetById,
     extractTrackerBlock,
     setStatus,
@@ -199,35 +149,7 @@ export function setup(ctx: SpindleFrontendContext) {
   });
 
   const persistConfig = () => {
-    ctx.sendToBackend({ type: "set_config", config });
-  };
-
-  const requestLatestTracker = (chatId: string) => {
-    if (latestTrackerRequestsInFlight.has(chatId)) return;
-    latestTrackerRequestsInFlight.add(chatId);
-    awaitingLatestTrackerChatId = chatId;
-    ctx.sendToBackend({ type: "get_latest_tracker", chatId });
-  };
-
-  const requestInitialTrackerRehydrate = () => {
-    if (initialTrackerRehydrateRequested) return;
-    try {
-      const active = ctx.getActiveChat();
-      if (!active?.chatId) return;
-      initialTrackerRehydrateRequested = true;
-      if (!currentChatId) currentChatId = active.chatId;
-      requestLatestTracker(active.chatId);
-    } catch {
-      // getActiveChat is best-effort; ignore if unavailable.
-    }
-  };
-
-  const flushPendingTrackerPayload = () => {
-    if (!configReady || awaitingLatestTrackerChatId || !pendingTrackerPayload) return;
-    const pending = pendingTrackerPayload;
-    pendingTrackerPayload = null;
-    if (pending.chatId && currentChatId && pending.chatId !== currentChatId) return;
-    handleTrackerPayload(pending.raw, pending.sourceContent, pending.messageId);
+    ctx.sendToBackend({ type: "set_config", config } satisfies FrontendToBackendMessage);
   };
 
   const backendUnsub = registerBackendMessages({
@@ -246,32 +168,23 @@ export function setup(ctx: SpindleFrontendContext) {
       set requestedPermissions(value) { requestedPermissions = value; },
       get ephemeralPoolStatus() { return ephemeralPoolStatus; },
       set ephemeralPoolStatus(value) { ephemeralPoolStatus = value; },
-      get currentChatId() { return currentChatId; },
-      set currentChatId(value) { currentChatId = value; },
-      get awaitingLatestTrackerChatId() { return awaitingLatestTrackerChatId; },
-      set awaitingLatestTrackerChatId(value) { awaitingLatestTrackerChatId = value; },
-      get pendingTrackerPayload() { return pendingTrackerPayload; },
-      set pendingTrackerPayload(value) { pendingTrackerPayload = value; },
       get configReady() { return configReady; },
       set configReady(value) { configReady = value; },
       get configRetryTimer() { return configRetryTimer; },
       set configRetryTimer(value) { configRetryTimer = value; },
-      get latestContent() { return latestContent; },
-      set latestContent(value) { latestContent = value; },
-      get latestTrackerMessageId() { return latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { latestTrackerMessageId = value; },
-      get latestTrackerRaw() { return latestTrackerRaw; },
-      set latestTrackerRaw(value) { latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { latestTrackerSourceContent = value; },
-      latestTrackerRequestsInFlight,
-      trackerMessageIds,
-      trackerComparisonBaselines,
+      get latestContent() { return renderState.latestContent; },
+      set latestContent(value) { renderState.latestContent = value; },
+      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
+      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
+      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
+      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
+      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
+      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
     },
+    hydration,
     panelHost,
     applyHideStyle,
     applyTagInterceptor,
-    requestInitialTrackerRehydrate,
     showCommandResult,
     setStatus,
     isImportedTemplate,
@@ -281,7 +194,6 @@ export function setup(ctx: SpindleFrontendContext) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
-    flushPendingTrackerPayload,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
@@ -307,30 +219,24 @@ export function setup(ctx: SpindleFrontendContext) {
   } = registerChatEvents({
     ctx,
     state: {
-      get currentChatId() { return currentChatId; },
-      set currentChatId(value) { currentChatId = value; },
-      get awaitingLatestTrackerChatId() { return awaitingLatestTrackerChatId; },
-      set awaitingLatestTrackerChatId(value) { awaitingLatestTrackerChatId = value; },
-      get pendingTrackerPayload() { return pendingTrackerPayload; },
-      set pendingTrackerPayload(value) { pendingTrackerPayload = value; },
       get configReady() { return configReady; },
       set configReady(value) { configReady = value; },
-      get latestTrackerMessageId() { return latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { latestTrackerMessageId = value; },
-      get previousTrackerData() { return previousTrackerData; },
-      set previousTrackerData(value) { previousTrackerData = value; },
-      trackerComparisonBaselines,
-      get latestTrackerRaw() { return latestTrackerRaw; },
-      set latestTrackerRaw(value) { latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { latestTrackerSourceContent = value; },
-      get latestContent() { return latestContent; },
-      set latestContent(value) { latestContent = value; },
-      get latestMessageRenderIntent() { return latestMessageRenderIntent; },
-      set latestMessageRenderIntent(value) { latestMessageRenderIntent = value; },
-      trackerMessageRenders,
-      trackerMessageIds,
-      trackerMessageMounts,
+      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
+      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
+      get previousTrackerData() { return renderState.previousTrackerData; },
+      set previousTrackerData(value) { renderState.previousTrackerData = value; },
+      trackerComparisonBaselines: renderState.trackerComparisonBaselines,
+      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
+      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
+      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
+      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
+      get latestContent() { return renderState.latestContent; },
+      set latestContent(value) { renderState.latestContent = value; },
+      get latestMessageRenderIntent() { return renderState.latestMessageRenderIntent; },
+      set latestMessageRenderIntent(value) { renderState.latestMessageRenderIntent = value; },
+      trackerMessageRenders: renderState.trackerMessageRenders,
+      trackerMessageIds: renderState.trackerMessageIds,
+      trackerMessageMounts: renderState.trackerMessageMounts,
       get grantedPermissions() { return grantedPermissions; },
       set grantedPermissions(value) { grantedPermissions = value; },
       get requestedPermissions() { return requestedPermissions; },
@@ -338,10 +244,10 @@ export function setup(ctx: SpindleFrontendContext) {
       get ephemeralPoolStatus() { return ephemeralPoolStatus; },
       set ephemeralPoolStatus(value) { ephemeralPoolStatus = value; },
     },
+    hydration,
     inlineProcessor,
     updateRegenerateButton,
     renderEmpty,
-    requestLatestTracker,
     handleContent,
     clearSideTrackerRender,
     clearMessageTrackerRender,
@@ -361,19 +267,18 @@ export function setup(ctx: SpindleFrontendContext) {
       set config(value) { config = value; },
       get configTrackerTagNameHint() { return configTrackerTagNameHint; },
       set configTrackerTagNameHint(value) { configTrackerTagNameHint = value; },
-      get latestContent() { return latestContent; },
-      set latestContent(value) { latestContent = value; },
-      get latestTrackerMessageId() { return latestTrackerMessageId; },
-      set latestTrackerMessageId(value) { latestTrackerMessageId = value; },
-      get latestTrackerRaw() { return latestTrackerRaw; },
-      set latestTrackerRaw(value) { latestTrackerRaw = value; },
-      get latestTrackerSourceContent() { return latestTrackerSourceContent; },
-      set latestTrackerSourceContent(value) { latestTrackerSourceContent = value; },
+      get latestContent() { return renderState.latestContent; },
+      set latestContent(value) { renderState.latestContent = value; },
+      get latestTrackerMessageId() { return renderState.latestTrackerMessageId; },
+      set latestTrackerMessageId(value) { renderState.latestTrackerMessageId = value; },
+      get latestTrackerRaw() { return renderState.latestTrackerRaw; },
+      set latestTrackerRaw(value) { renderState.latestTrackerRaw = value; },
+      get latestTrackerSourceContent() { return renderState.latestTrackerSourceContent; },
+      set latestTrackerSourceContent(value) { renderState.latestTrackerSourceContent = value; },
       get modelCombobox() { return modelCombobox; },
       set modelCombobox(value) { modelCombobox = value; },
-      get currentChatId() { return currentChatId; },
-      set currentChatId(value) { currentChatId = value; },
     },
+    readCurrentChatId: hydration.currentChatId,
     getPresetById,
     isImportedTemplate,
     applyThemeClass,
@@ -397,8 +302,8 @@ export function setup(ctx: SpindleFrontendContext) {
   });
 
   ensureModelCombobox();
-  ctx.sendToBackend({ type: "get_config" });
-  ctx.sendToBackend({ type: "get_connections" });
+  ctx.sendToBackend({ type: "get_config" } satisfies FrontendToBackendMessage);
+  ctx.sendToBackend({ type: "get_connections" } satisfies FrontendToBackendMessage);
   updatePermissionGatedControls();
   setStatus(LOADING_CONFIG_STATUS);
   renderEmpty("When a message includes a tracker tag, cards will appear here.");
@@ -410,7 +315,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (configReady) return;
     configRetryTimer = setTimeout(() => {
       if (!configReady) {
-        ctx.sendToBackend({ type: "get_config" });
+        ctx.sendToBackend({ type: "get_config" } satisfies FrontendToBackendMessage);
         scheduleConfigRetry();
       }
     }, 2000);
@@ -439,9 +344,9 @@ export function setup(ctx: SpindleFrontendContext) {
     if (removeHideStyle) removeHideStyle();
     if (removeTagInterceptor) removeTagInterceptor();
     clearSideTrackerRender();
-    for (const mount of trackerMessageMounts.values()) ctx.dom.uninject(mount);
-    trackerMessageMounts.clear();
-    trackerMessageRenders.clear();
+    for (const mount of renderState.trackerMessageMounts.values()) ctx.dom.uninject(mount);
+    renderState.trackerMessageMounts.clear();
+    renderState.trackerMessageRenders.clear();
     hideAllGeneratingIndicators();
     inlineProcessor.destroy();
     removePanelStyle();

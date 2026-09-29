@@ -5430,67 +5430,6 @@ var require_handlebars = __commonJS(function(exports, module) {
   module.exports = exports["default"];
 });
 
-// src/frontend/frontendReadyGate.ts
-var READY_MIN_VERSION = [1, 0, 6];
-function parseVersionSegment(segment) {
-  if (!segment)
-    return 0;
-  const match = segment.match(/\d+/);
-  return match ? Number(match[0]) : 0;
-}
-function isVersionAtLeast(version, minimum) {
-  const parts = version.split(".");
-  for (let index = 0;index < minimum.length; index += 1) {
-    const current = parseVersionSegment(parts[index]);
-    const required = minimum[index];
-    if (current > required)
-      return true;
-    if (current < required)
-      return false;
-  }
-  return true;
-}
-async function shouldBroadcastReadyForHost() {
-  try {
-    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
-    if (!response.ok)
-      return true;
-    const payload = await response.json();
-    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
-    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
-  } catch {
-    return true;
-  }
-}
-function createReadyGate(ctx) {
-  const readyContext = ctx;
-  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
-    return {
-      dispose() {},
-      release() {}
-    };
-  }
-  readyContext.deferReady();
-  const shouldBroadcastReady = shouldBroadcastReadyForHost();
-  let disposed = false;
-  let released = false;
-  return {
-    dispose() {
-      disposed = true;
-    },
-    release() {
-      if (disposed || released)
-        return;
-      released = true;
-      shouldBroadcastReady.then((allowed) => {
-        if (!disposed && allowed) {
-          readyContext.ready?.();
-        }
-      });
-    }
-  };
-}
-
 // node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = Symbol.for("yaml.alias");
 var DOC = Symbol.for("yaml.document");
@@ -11632,6 +11571,67 @@ function normalizeTrackerData(data) {
   };
 }
 
+// src/frontend/frontendReadyGate.ts
+var READY_MIN_VERSION = [1, 0, 6];
+function parseVersionSegment(segment) {
+  if (!segment)
+    return 0;
+  const match = segment.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+function isVersionAtLeast(version, minimum) {
+  const parts = version.split(".");
+  for (let index = 0;index < minimum.length; index += 1) {
+    const current = parseVersionSegment(parts[index]);
+    const required = minimum[index];
+    if (current > required)
+      return true;
+    if (current < required)
+      return false;
+  }
+  return true;
+}
+async function shouldBroadcastReadyForHost() {
+  try {
+    const response = await fetch("/api/v1/system/info", { credentials: "same-origin" });
+    if (!response.ok)
+      return true;
+    const payload = await response.json();
+    const version = typeof payload?.backend?.version === "string" ? payload.backend.version : null;
+    return version ? isVersionAtLeast(version, READY_MIN_VERSION) : true;
+  } catch {
+    return true;
+  }
+}
+function createReadyGate(ctx) {
+  const readyContext = ctx;
+  if (typeof readyContext.deferReady !== "function" || typeof readyContext.ready !== "function") {
+    return {
+      dispose() {},
+      release() {}
+    };
+  }
+  readyContext.deferReady();
+  const shouldBroadcastReady = shouldBroadcastReadyForHost();
+  let disposed = false;
+  let released = false;
+  return {
+    dispose() {
+      disposed = true;
+    },
+    release() {
+      if (disposed || released)
+        return;
+      released = true;
+      shouldBroadcastReady.then((allowed) => {
+        if (!disposed && allowed) {
+          readyContext.ready?.();
+        }
+      });
+    }
+  };
+}
+
 // src/frontend/frontendTemplate.ts
 var import_handlebars = __toESM(require_handlebars(), 1);
 var TEMPLATE_CACHE = new Map;
@@ -12639,15 +12639,13 @@ function createTrackerRendering(deps) {
   };
   const handleTrackerPayload = (raw, sourceContent, messageId = null) => {
     if (!deps.isConfigReady()) {
-      if (!state.pendingTrackerPayload?.authoritative) {
-        state.pendingTrackerPayload = {
-          raw,
-          sourceContent,
-          messageId,
-          chatId: deps.readCurrentChatId(),
-          authoritative: false
-        };
-      }
+      deps.hydration.offerPending({
+        raw,
+        sourceContent,
+        messageId,
+        chatId: deps.hydration.currentChatId(),
+        authoritative: false
+      });
       return;
     }
     let comparisonData = state.previousTrackerData;
@@ -12736,6 +12734,26 @@ function createTrackerRendering(deps) {
     retryGeneratingIndicator,
     handleTrackerPayload,
     handleContent
+  };
+}
+
+// src/frontend/trackerRenderState.ts
+function createTrackerRenderState() {
+  return {
+    previousTrackerData: null,
+    latestContent: null,
+    latestTrackerMessageId: null,
+    latestTrackerRaw: null,
+    latestTrackerSourceContent: null,
+    trackerMessageIds: new Set,
+    trackerMessageMounts: new Map,
+    trackerMessageRenders: new Map,
+    trackerComparisonBaselines: new Map,
+    trackerGeneratingIndicators: new Map,
+    latestMessageRenderIntent: null,
+    pendingGeneratingIndicatorMessageId: null,
+    sideTrackerMount: null,
+    sideAppMount: null
   };
 }
 
@@ -19882,7 +19900,7 @@ function createFrontendControls(deps) {
     if (!btn)
       return;
     const llmAvailable = hasPermission("generation") && hasPermission("chat_mutation") && hasPermission("generation_parameters");
-    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.readCurrentChatId());
+    btn.disabled = !(deps.readConfig().useSecondaryLLM && llmAvailable && deps.hydration.currentChatId());
     btn.title = btn.disabled ? "Regenerate becomes available once a chat is open and the secondary LLM is enabled" : deps.readLatestTrackerMessageId() ? "Strip the existing tracker block and ask the secondary LLM to produce a fresh one" : "Run the secondary LLM against the latest assistant message";
   };
   const updatePermissionGatedControls = () => {
@@ -19933,16 +19951,14 @@ function createFrontendControls(deps) {
         return;
       const sourceContent = typeof payload.fullMatch === "string" ? payload.fullMatch : payload.content;
       const messageId = payload.messageId || null;
-      if (!deps.isConfigReady() || !!payloadChatId && deps.readAwaitingLatestTrackerChatId() === payloadChatId) {
-        if (!state.pendingTrackerPayload?.authoritative) {
-          state.pendingTrackerPayload = {
-            raw: payload.content,
-            sourceContent,
-            messageId,
-            chatId: payloadChatId || null,
-            authoritative: false
-          };
-        }
+      if (!deps.isConfigReady() || !!payloadChatId && deps.hydration.awaitingChatId() === payloadChatId) {
+        deps.hydration.offerPending({
+          raw: payload.content,
+          sourceContent,
+          messageId,
+          chatId: payloadChatId || null,
+          authoritative: false
+        });
         return;
       }
       deps.handleTrackerPayload(payload.content, sourceContent, messageId);
@@ -20136,7 +20152,13 @@ function readWireRecord(value) {
 }
 function readWireMessage(value) {
   const record = readWireRecord(value);
-  return record && typeof record.type === "string" ? record : null;
+  if (!record || typeof record.type !== "string")
+    return null;
+  if (record.type === "config" && !readWireRecord(record.config))
+    return null;
+  if (record.type === "tracker_history_latest" && record.entry != null && !readWireRecord(record.entry))
+    return null;
+  return record;
 }
 
 // src/frontend/backendMessages.ts
@@ -20148,7 +20170,7 @@ function registerBackendMessages(deps) {
     panelHost,
     applyHideStyle,
     applyTagInterceptor,
-    requestInitialTrackerRehydrate,
+    hydration,
     showCommandResult,
     setStatus,
     isImportedTemplate,
@@ -20158,7 +20180,6 @@ function registerBackendMessages(deps) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
-    flushPendingTrackerPayload,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
@@ -20182,7 +20203,7 @@ function registerBackendMessages(deps) {
       state.configTrackerTagNameHint = state.config.trackerTagName;
       applyHideStyle();
       applyTagInterceptor();
-      requestInitialTrackerRehydrate();
+      hydration.requestInitial();
       return;
     }
     if (obj?.type === "command_result" && obj.payload && typeof obj.payload === "object") {
@@ -20279,36 +20300,8 @@ function registerBackendMessages(deps) {
     }
     if (obj?.type === "tracker_history_latest") {
       const responseChatId = typeof obj.chatId === "string" ? obj.chatId : null;
-      if (responseChatId)
-        state.latestTrackerRequestsInFlight.delete(responseChatId);
-      if (responseChatId && state.currentChatId && responseChatId !== state.currentChatId)
-        return;
-      if (!state.currentChatId && responseChatId)
-        state.currentChatId = responseChatId;
-      if (!responseChatId || state.awaitingLatestTrackerChatId === responseChatId) {
-        state.awaitingLatestTrackerChatId = null;
-      }
       const entry = obj.entry;
-      if (entry && typeof entry.payload === "string" && entry.payload.trim()) {
-        const msgId = typeof entry.messageId === "string" ? entry.messageId : null;
-        if (msgId && state.trackerMessageIds.has(msgId)) {
-          state.pendingTrackerPayload = null;
-          return;
-        }
-        if (msgId) {
-          const previous = typeof entry.previousPayload === "string" ? parseTrackerBlock(entry.previousPayload) : null;
-          state.trackerComparisonBaselines.clear();
-          state.trackerComparisonBaselines.set(msgId, previous);
-        }
-        state.pendingTrackerPayload = {
-          raw: entry.payload,
-          sourceContent: entry.payload,
-          messageId: msgId,
-          chatId: responseChatId,
-          authoritative: true
-        };
-      }
-      flushPendingTrackerPayload();
+      hydration.acceptLatest(responseChatId, entry);
       return;
     }
     if (obj?.type === "permission_changed") {
@@ -20372,8 +20365,8 @@ function registerBackendMessages(deps) {
     if (shouldResetStatusAfterConfigLoad()) {
       setStatus(DEFAULT_PANEL_STATUS);
     }
-    requestInitialTrackerRehydrate();
-    flushPendingTrackerPayload();
+    hydration.requestInitial();
+    hydration.flushPending();
     inlineProcessor.processAll();
   });
   return backendUnsub;
@@ -20450,7 +20443,6 @@ function registerChatEvents(deps) {
     inlineProcessor,
     updateRegenerateButton,
     renderEmpty,
-    requestLatestTracker,
     handleContent,
     clearSideTrackerRender,
     clearMessageTrackerRender,
@@ -20479,15 +20471,12 @@ function registerChatEvents(deps) {
     return typeof nested?.chatId === "string" ? nested.chatId : typeof nested?.chat_id === "string" ? nested.chat_id : null;
   };
   const handleChatSwitch = (chatId) => {
-    if (!chatId || chatId === state.currentChatId)
+    if (!chatId || !deps.hydration.beginChat(chatId))
       return;
-    state.currentChatId = chatId;
-    state.awaitingLatestTrackerChatId = chatId;
-    state.pendingTrackerPayload = null;
     updateRegenerateButton();
     resetChatState();
     renderEmpty("When a message includes a tracker tag, cards will appear here.");
-    requestLatestTracker(chatId);
+    deps.hydration.requestLatest(chatId);
     if (state.configReady) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         inlineProcessor.processAll();
@@ -20500,10 +20489,10 @@ function registerChatEvents(deps) {
       const active = ctx.getActiveChat();
       hostActiveChatId = active?.chatId || null;
     } catch {}
-    if (hostActiveChatId && hostActiveChatId !== state.currentChatId) {
+    if (hostActiveChatId && hostActiveChatId !== deps.hydration.currentChatId()) {
       handleChatSwitch(hostActiveChatId);
     }
-    const activeChatId = hostActiveChatId || state.currentChatId;
+    const activeChatId = hostActiveChatId || deps.hydration.currentChatId();
     if (!activeChatId) {
       if (activityChatId)
         handleChatSwitch(activityChatId);
@@ -20838,14 +20827,15 @@ function registerSettingsActions(deps) {
   });
   const llmRegenerateBtn = byId("sst-lumi-llm-regenerate");
   llmRegenerateBtn?.addEventListener("click", () => {
-    if (!state.currentChatId) {
+    const chatId = deps.readCurrentChatId();
+    if (!chatId) {
       setLLMStatus("Open a chat first to regenerate", "error");
       return;
     }
     setLLMStatus("Regenerating tracker...", "generating");
     ctx.sendToBackend({
       type: "regenerate_secondary_tracker",
-      chatId: state.currentChatId,
+      chatId,
       messageId: state.latestTrackerMessageId ?? undefined
     });
   });
@@ -21227,6 +21217,90 @@ function createInlineTemplateProcessor(deps) {
   return { processMessage, processAll, clearMessage, observeDocument, destroy };
 }
 
+// src/frontend/trackerHydration.ts
+function createTrackerHydration(deps) {
+  let currentChatId = null;
+  let awaitingLatestTrackerChatId = null;
+  let pendingTrackerPayload = null;
+  let initialTrackerRehydrateRequested = false;
+  const requestsInFlight = new Set;
+  const requestLatest = (chatId) => {
+    if (requestsInFlight.has(chatId))
+      return;
+    requestsInFlight.add(chatId);
+    awaitingLatestTrackerChatId = chatId;
+    deps.sendLatestRequest(chatId);
+  };
+  const flushPending = () => {
+    if (!deps.isConfigReady() || awaitingLatestTrackerChatId || !pendingTrackerPayload)
+      return;
+    const pending = pendingTrackerPayload;
+    pendingTrackerPayload = null;
+    if (pending.chatId && currentChatId && pending.chatId !== currentChatId)
+      return;
+    deps.renderPayload(pending);
+  };
+  return {
+    currentChatId: () => currentChatId,
+    awaitingChatId: () => awaitingLatestTrackerChatId,
+    beginChat: (chatId) => {
+      if (!chatId || chatId === currentChatId)
+        return false;
+      currentChatId = chatId;
+      awaitingLatestTrackerChatId = chatId;
+      pendingTrackerPayload = null;
+      return true;
+    },
+    requestLatest,
+    requestInitial: () => {
+      if (initialTrackerRehydrateRequested)
+        return;
+      try {
+        const chatId = deps.getActiveChatId();
+        if (!chatId)
+          return;
+        initialTrackerRehydrateRequested = true;
+        if (!currentChatId)
+          currentChatId = chatId;
+        requestLatest(chatId);
+      } catch {}
+    },
+    offerPending: (payload) => {
+      if (!pendingTrackerPayload?.authoritative)
+        pendingTrackerPayload = payload;
+    },
+    acceptLatest: (responseChatId, entry) => {
+      if (responseChatId)
+        requestsInFlight.delete(responseChatId);
+      if (responseChatId && currentChatId && responseChatId !== currentChatId)
+        return;
+      if (!currentChatId && responseChatId)
+        currentChatId = responseChatId;
+      if (!responseChatId || awaitingLatestTrackerChatId === responseChatId) {
+        awaitingLatestTrackerChatId = null;
+      }
+      if (entry && typeof entry.payload === "string" && entry.payload.trim()) {
+        const messageId = typeof entry.messageId === "string" ? entry.messageId : null;
+        if (messageId && deps.hasRenderedMessage(messageId)) {
+          pendingTrackerPayload = null;
+          return;
+        }
+        if (messageId)
+          deps.setComparisonBaseline(messageId, typeof entry.previousPayload === "string" ? entry.previousPayload : null);
+        pendingTrackerPayload = {
+          raw: entry.payload,
+          sourceContent: entry.payload,
+          messageId,
+          chatId: responseChatId,
+          authoritative: true
+        };
+      }
+      flushPending();
+    },
+    flushPending
+  };
+}
+
 // src/frontend/index.ts
 function setup(ctx) {
   const panelHost = createPanelHost();
@@ -21253,23 +21327,8 @@ function setup(ctx) {
   let removeHideStyle = null;
   let removeTagInterceptor = null;
   let tagInterceptorSignature = null;
-  let previousTrackerData = null;
-  let latestContent = null;
-  let latestTrackerMessageId = null;
-  let latestTrackerRaw = null;
-  let latestTrackerSourceContent = null;
+  const renderState = createTrackerRenderState();
   let configReady = false;
-  let pendingTrackerPayload = null;
-  let awaitingLatestTrackerChatId = null;
-  let initialTrackerRehydrateRequested = false;
-  const latestTrackerRequestsInFlight = new Set;
-  const trackerMessageIds = new Set;
-  const trackerMessageMounts = new Map;
-  const trackerMessageRenders = new Map;
-  const trackerComparisonBaselines = new Map;
-  const trackerGeneratingIndicators = new Map;
-  let latestMessageRenderIntent = null;
-  let pendingGeneratingIndicatorMessageId = null;
   const inlineProcessor = createInlineTemplateProcessor({
     getConfig: () => ({
       enableInlineTemplates: config.enableInlineTemplates,
@@ -21277,14 +21336,22 @@ function setup(ctx) {
     }),
     getPreset: () => getPresetById(config, config.templateId)
   });
-  let sideTrackerMount = null;
-  let sideAppMount = null;
   let grantedPermissions = [];
   let requestedPermissions = [];
   let ephemeralPoolStatus = null;
   let connections = [];
   let modelCombobox = null;
-  let currentChatId = null;
+  const hydration = createTrackerHydration({
+    getActiveChatId: () => ctx.getActiveChat()?.chatId || null,
+    sendLatestRequest: (chatId) => ctx.sendToBackend({ type: "get_latest_tracker", chatId }),
+    isConfigReady: () => configReady,
+    hasRenderedMessage: (messageId) => renderState.trackerMessageIds.has(messageId),
+    setComparisonBaseline: (messageId, previousPayload) => {
+      renderState.trackerComparisonBaselines.clear();
+      renderState.trackerComparisonBaselines.set(messageId, previousPayload ? parseTrackerBlock(previousPayload) : null);
+    },
+    renderPayload: (payload) => handleTrackerPayload(payload.raw, payload.sourceContent, payload.messageId)
+  });
   const removePanelStyle = ctx.dom.addStyle(PANEL_CSS);
   const mountRoot = ctx.ui.mount("settings_extensions");
   const stalePanels = document.querySelectorAll("#sst-lumi-panel");
@@ -21330,24 +21397,17 @@ function setup(ctx) {
       },
       set modelCombobox(value) {
         modelCombobox = value;
-      },
-      get pendingTrackerPayload() {
-        return pendingTrackerPayload;
-      },
-      set pendingTrackerPayload(value) {
-        pendingTrackerPayload = value;
       }
     },
+    hydration,
     readConfig: () => config,
     writeConfig: (value) => {
       config = value;
     },
     readConnections: () => connections,
     readGrantedPermissions: () => grantedPermissions,
-    readCurrentChatId: () => currentChatId,
-    readLatestTrackerMessageId: () => latestTrackerMessageId,
+    readLatestTrackerMessageId: () => renderState.latestTrackerMessageId,
     isConfigReady: () => configReady,
-    readAwaitingLatestTrackerChatId: () => awaitingLatestTrackerChatId,
     isActivityForActiveChat: (chatId) => isActivityForActiveChat(chatId),
     handleTrackerPayload: (raw, sourceContent, messageId) => handleTrackerPayload(raw, sourceContent, messageId),
     mountTemplateOptions,
@@ -21367,76 +21427,10 @@ function setup(ctx) {
   } = createTrackerRendering({
     ctx,
     byId,
-    state: {
-      get previousTrackerData() {
-        return previousTrackerData;
-      },
-      set previousTrackerData(value) {
-        previousTrackerData = value;
-      },
-      get latestContent() {
-        return latestContent;
-      },
-      set latestContent(value) {
-        latestContent = value;
-      },
-      get latestTrackerMessageId() {
-        return latestTrackerMessageId;
-      },
-      set latestTrackerMessageId(value) {
-        latestTrackerMessageId = value;
-      },
-      get latestTrackerRaw() {
-        return latestTrackerRaw;
-      },
-      set latestTrackerRaw(value) {
-        latestTrackerRaw = value;
-      },
-      get latestTrackerSourceContent() {
-        return latestTrackerSourceContent;
-      },
-      set latestTrackerSourceContent(value) {
-        latestTrackerSourceContent = value;
-      },
-      get pendingTrackerPayload() {
-        return pendingTrackerPayload;
-      },
-      set pendingTrackerPayload(value) {
-        pendingTrackerPayload = value;
-      },
-      trackerMessageIds,
-      trackerMessageMounts,
-      trackerMessageRenders,
-      trackerComparisonBaselines,
-      trackerGeneratingIndicators,
-      get latestMessageRenderIntent() {
-        return latestMessageRenderIntent;
-      },
-      set latestMessageRenderIntent(value) {
-        latestMessageRenderIntent = value;
-      },
-      get pendingGeneratingIndicatorMessageId() {
-        return pendingGeneratingIndicatorMessageId;
-      },
-      set pendingGeneratingIndicatorMessageId(value) {
-        pendingGeneratingIndicatorMessageId = value;
-      },
-      get sideTrackerMount() {
-        return sideTrackerMount;
-      },
-      set sideTrackerMount(value) {
-        sideTrackerMount = value;
-      },
-      get sideAppMount() {
-        return sideAppMount;
-      },
-      set sideAppMount(value) {
-        sideAppMount = value;
-      }
-    },
+    state: renderState,
+    hydration,
     readConfig: () => config,
     isConfigReady: () => configReady,
-    readCurrentChatId: () => currentChatId,
     getPresetById,
     extractTrackerBlock,
     setStatus,
@@ -21448,35 +21442,6 @@ function setup(ctx) {
   });
   const persistConfig = () => {
     ctx.sendToBackend({ type: "set_config", config });
-  };
-  const requestLatestTracker = (chatId) => {
-    if (latestTrackerRequestsInFlight.has(chatId))
-      return;
-    latestTrackerRequestsInFlight.add(chatId);
-    awaitingLatestTrackerChatId = chatId;
-    ctx.sendToBackend({ type: "get_latest_tracker", chatId });
-  };
-  const requestInitialTrackerRehydrate = () => {
-    if (initialTrackerRehydrateRequested)
-      return;
-    try {
-      const active = ctx.getActiveChat();
-      if (!active?.chatId)
-        return;
-      initialTrackerRehydrateRequested = true;
-      if (!currentChatId)
-        currentChatId = active.chatId;
-      requestLatestTracker(active.chatId);
-    } catch {}
-  };
-  const flushPendingTrackerPayload = () => {
-    if (!configReady || awaitingLatestTrackerChatId || !pendingTrackerPayload)
-      return;
-    const pending = pendingTrackerPayload;
-    pendingTrackerPayload = null;
-    if (pending.chatId && currentChatId && pending.chatId !== currentChatId)
-      return;
-    handleTrackerPayload(pending.raw, pending.sourceContent, pending.messageId);
   };
   const backendUnsub = registerBackendMessages({
     ctx,
@@ -21518,24 +21483,6 @@ function setup(ctx) {
       set ephemeralPoolStatus(value) {
         ephemeralPoolStatus = value;
       },
-      get currentChatId() {
-        return currentChatId;
-      },
-      set currentChatId(value) {
-        currentChatId = value;
-      },
-      get awaitingLatestTrackerChatId() {
-        return awaitingLatestTrackerChatId;
-      },
-      set awaitingLatestTrackerChatId(value) {
-        awaitingLatestTrackerChatId = value;
-      },
-      get pendingTrackerPayload() {
-        return pendingTrackerPayload;
-      },
-      set pendingTrackerPayload(value) {
-        pendingTrackerPayload = value;
-      },
       get configReady() {
         return configReady;
       },
@@ -21549,37 +21496,34 @@ function setup(ctx) {
         configRetryTimer = value;
       },
       get latestContent() {
-        return latestContent;
+        return renderState.latestContent;
       },
       set latestContent(value) {
-        latestContent = value;
+        renderState.latestContent = value;
       },
       get latestTrackerMessageId() {
-        return latestTrackerMessageId;
+        return renderState.latestTrackerMessageId;
       },
       set latestTrackerMessageId(value) {
-        latestTrackerMessageId = value;
+        renderState.latestTrackerMessageId = value;
       },
       get latestTrackerRaw() {
-        return latestTrackerRaw;
+        return renderState.latestTrackerRaw;
       },
       set latestTrackerRaw(value) {
-        latestTrackerRaw = value;
+        renderState.latestTrackerRaw = value;
       },
       get latestTrackerSourceContent() {
-        return latestTrackerSourceContent;
+        return renderState.latestTrackerSourceContent;
       },
       set latestTrackerSourceContent(value) {
-        latestTrackerSourceContent = value;
-      },
-      latestTrackerRequestsInFlight,
-      trackerMessageIds,
-      trackerComparisonBaselines
+        renderState.latestTrackerSourceContent = value;
+      }
     },
+    hydration,
     panelHost,
     applyHideStyle,
     applyTagInterceptor,
-    requestInitialTrackerRehydrate,
     showCommandResult,
     setStatus,
     isImportedTemplate,
@@ -21589,7 +21533,6 @@ function setup(ctx) {
     showGeneratingIndicator,
     hideGeneratingIndicator,
     handleContent,
-    flushPendingTrackerPayload,
     renderCapabilities,
     updatePermissionGatedControls,
     syncControls,
@@ -21614,24 +21557,6 @@ function setup(ctx) {
   } = registerChatEvents({
     ctx,
     state: {
-      get currentChatId() {
-        return currentChatId;
-      },
-      set currentChatId(value) {
-        currentChatId = value;
-      },
-      get awaitingLatestTrackerChatId() {
-        return awaitingLatestTrackerChatId;
-      },
-      set awaitingLatestTrackerChatId(value) {
-        awaitingLatestTrackerChatId = value;
-      },
-      get pendingTrackerPayload() {
-        return pendingTrackerPayload;
-      },
-      set pendingTrackerPayload(value) {
-        pendingTrackerPayload = value;
-      },
       get configReady() {
         return configReady;
       },
@@ -21639,45 +21564,45 @@ function setup(ctx) {
         configReady = value;
       },
       get latestTrackerMessageId() {
-        return latestTrackerMessageId;
+        return renderState.latestTrackerMessageId;
       },
       set latestTrackerMessageId(value) {
-        latestTrackerMessageId = value;
+        renderState.latestTrackerMessageId = value;
       },
       get previousTrackerData() {
-        return previousTrackerData;
+        return renderState.previousTrackerData;
       },
       set previousTrackerData(value) {
-        previousTrackerData = value;
+        renderState.previousTrackerData = value;
       },
-      trackerComparisonBaselines,
+      trackerComparisonBaselines: renderState.trackerComparisonBaselines,
       get latestTrackerRaw() {
-        return latestTrackerRaw;
+        return renderState.latestTrackerRaw;
       },
       set latestTrackerRaw(value) {
-        latestTrackerRaw = value;
+        renderState.latestTrackerRaw = value;
       },
       get latestTrackerSourceContent() {
-        return latestTrackerSourceContent;
+        return renderState.latestTrackerSourceContent;
       },
       set latestTrackerSourceContent(value) {
-        latestTrackerSourceContent = value;
+        renderState.latestTrackerSourceContent = value;
       },
       get latestContent() {
-        return latestContent;
+        return renderState.latestContent;
       },
       set latestContent(value) {
-        latestContent = value;
+        renderState.latestContent = value;
       },
       get latestMessageRenderIntent() {
-        return latestMessageRenderIntent;
+        return renderState.latestMessageRenderIntent;
       },
       set latestMessageRenderIntent(value) {
-        latestMessageRenderIntent = value;
+        renderState.latestMessageRenderIntent = value;
       },
-      trackerMessageRenders,
-      trackerMessageIds,
-      trackerMessageMounts,
+      trackerMessageRenders: renderState.trackerMessageRenders,
+      trackerMessageIds: renderState.trackerMessageIds,
+      trackerMessageMounts: renderState.trackerMessageMounts,
       get grantedPermissions() {
         return grantedPermissions;
       },
@@ -21697,10 +21622,10 @@ function setup(ctx) {
         ephemeralPoolStatus = value;
       }
     },
+    hydration,
     inlineProcessor,
     updateRegenerateButton,
     renderEmpty,
-    requestLatestTracker,
     handleContent,
     clearSideTrackerRender,
     clearMessageTrackerRender,
@@ -21729,42 +21654,37 @@ function setup(ctx) {
         configTrackerTagNameHint = value;
       },
       get latestContent() {
-        return latestContent;
+        return renderState.latestContent;
       },
       set latestContent(value) {
-        latestContent = value;
+        renderState.latestContent = value;
       },
       get latestTrackerMessageId() {
-        return latestTrackerMessageId;
+        return renderState.latestTrackerMessageId;
       },
       set latestTrackerMessageId(value) {
-        latestTrackerMessageId = value;
+        renderState.latestTrackerMessageId = value;
       },
       get latestTrackerRaw() {
-        return latestTrackerRaw;
+        return renderState.latestTrackerRaw;
       },
       set latestTrackerRaw(value) {
-        latestTrackerRaw = value;
+        renderState.latestTrackerRaw = value;
       },
       get latestTrackerSourceContent() {
-        return latestTrackerSourceContent;
+        return renderState.latestTrackerSourceContent;
       },
       set latestTrackerSourceContent(value) {
-        latestTrackerSourceContent = value;
+        renderState.latestTrackerSourceContent = value;
       },
       get modelCombobox() {
         return modelCombobox;
       },
       set modelCombobox(value) {
         modelCombobox = value;
-      },
-      get currentChatId() {
-        return currentChatId;
-      },
-      set currentChatId(value) {
-        currentChatId = value;
       }
     },
+    readCurrentChatId: hydration.currentChatId,
     getPresetById,
     isImportedTemplate,
     applyThemeClass,
@@ -21827,10 +21747,10 @@ function setup(ctx) {
     if (removeTagInterceptor)
       removeTagInterceptor();
     clearSideTrackerRender();
-    for (const mount of trackerMessageMounts.values())
+    for (const mount of renderState.trackerMessageMounts.values())
       ctx.dom.uninject(mount);
-    trackerMessageMounts.clear();
-    trackerMessageRenders.clear();
+    renderState.trackerMessageMounts.clear();
+    renderState.trackerMessageRenders.clear();
     hideAllGeneratingIndicators();
     inlineProcessor.destroy();
     removePanelStyle();

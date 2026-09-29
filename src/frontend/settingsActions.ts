@@ -4,6 +4,7 @@ import type { TrackerConfig } from "../shared/trackerConfig";
 import { DEFAULT_CONFIG } from "../shared/trackerConfig";
 import { buildSavedFrontendConfig } from "./frontendSettingsValues";
 import type { createInlineTemplateProcessor } from "./inlineTemplates";
+import type { FrontendToBackendMessage } from "../shared/wireMessages";
 
 export function registerSettingsActions(deps: {
   ctx: SpindleFrontendContext;
@@ -16,8 +17,8 @@ export function registerSettingsActions(deps: {
     latestTrackerRaw: string | null;
     latestTrackerSourceContent: string | null;
     modelCombobox: SpindleModelComboboxHandle | null;
-    currentChatId: string | null;
   };
+  readCurrentChatId: () => string | null;
   getPresetById: (config: TrackerConfig, id: string) => TemplatePreset;
   isImportedTemplate: (config: TrackerConfig, id: string) => boolean;
   applyThemeClass: (preset: TemplatePreset) => void;
@@ -131,7 +132,7 @@ export function registerSettingsActions(deps: {
       : null;
     if (!preset || !window.confirm(`Delete imported template "${preset.templateName}"?`)) return;
     deleteTemplateButton.disabled = true;
-    ctx.sendToBackend({ type: "delete_preset", templateId });
+    ctx.sendToBackend({ type: "delete_preset", templateId } satisfies FrontendToBackendMessage);
     setStatus(`Deleting template: ${preset.templateName}...`);
   });
 
@@ -149,7 +150,7 @@ export function registerSettingsActions(deps: {
         type: "import_preset_file",
         fileName: file.name,
         text,
-      });
+      } satisfies FrontendToBackendMessage);
       setStatus(`${statusPrefix} ${file.name}...`);
     } catch {
       setStatus("Import cancelled");
@@ -177,18 +178,19 @@ export function registerSettingsActions(deps: {
 
   const llmRegenerateBtn = byId<HTMLButtonElement>("sst-lumi-llm-regenerate");
   llmRegenerateBtn?.addEventListener("click", () => {
-    if (!state.currentChatId) {
+    const chatId = deps.readCurrentChatId();
+    if (!chatId) {
       setLLMStatus("Open a chat first to regenerate", "error");
       return;
     }
     setLLMStatus("Regenerating tracker...", "generating");
     ctx.sendToBackend({
       type: "regenerate_secondary_tracker",
-      chatId: state.currentChatId,
+      chatId,
       // Hint the message we last rendered a tracker for, if any. Backend
       // falls back to the latest assistant message when this is absent
       // or stale, so a missing hint is fine.
       messageId: state.latestTrackerMessageId ?? undefined,
-    });
+    } satisfies FrontendToBackendMessage);
   });
 }

@@ -4,6 +4,7 @@ import type { TrackerConfig } from "../shared/trackerConfig";
 import { parseTrackerBlock, type TrackerData } from "../shared/trackerData";
 import { resolveTrackerMountMode, type TrackerMountMode } from "./frontendTemplate";
 import { buildTrackerMarkup } from "./frontendTemplateRenderer";
+import type { TrackerHydration } from "./trackerHydration";
 
 export type TrackerRenderInputs = {
   data: TrackerData;
@@ -29,7 +30,6 @@ export function createTrackerRendering(deps: {
     latestTrackerMessageId: string | null;
     latestTrackerRaw: string | null;
     latestTrackerSourceContent: string | null;
-    pendingTrackerPayload: PendingTrackerPayload | null;
     trackerMessageIds: Set<string>;
     trackerMessageMounts: Map<string, Element>;
     trackerMessageRenders: Map<string, TrackerRenderInputs>;
@@ -40,9 +40,9 @@ export function createTrackerRendering(deps: {
     sideTrackerMount: Element | null;
     sideAppMount: { mount: SpindleAppMountHandle; side: string } | null;
   };
+  hydration: TrackerHydration;
   readConfig: () => TrackerConfig;
   isConfigReady: () => boolean;
-  readCurrentChatId: () => string | null;
   getPresetById: (config: TrackerConfig, id: string) => TemplatePreset;
   extractTrackerBlock: (content: string, identifier: string) => string | null;
   setStatus: (text: string) => void;
@@ -335,15 +335,13 @@ export function createTrackerRendering(deps: {
 
   const handleTrackerPayload = (raw: string, sourceContent: string, messageId: string | null = null) => {
     if (!deps.isConfigReady()) {
-      if (!state.pendingTrackerPayload?.authoritative) {
-        state.pendingTrackerPayload = {
+      deps.hydration.offerPending({
           raw,
           sourceContent,
           messageId,
-          chatId: deps.readCurrentChatId(),
+          chatId: deps.hydration.currentChatId(),
           authoritative: false,
-        };
-      }
+      });
       return;
     }
     let comparisonData = state.previousTrackerData;

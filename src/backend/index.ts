@@ -16,6 +16,7 @@ import { createMacroPublisher } from "./macroPublisher";
 import { createCommandEngine } from "./commandEngine";
 import { createSettingsStore } from "./settingsStore";
 import type { TypeSafeCorsTransport } from "./typesafe";
+import type { BackendToFrontendMessage } from "../shared/wireMessages";
 
 /**
  * DI-boundary adapter: routes every TypeSafe call through Lumiverse's CORS
@@ -363,7 +364,7 @@ spindle.permissions.onChanged(({ permission, granted, allGranted }) => {
     permission,
     granted,
     allGranted,
-  }, activeUserId || undefined);
+  } satisfies BackendToFrontendMessage, activeUserId || undefined);
 });
 
 spindle.permissions.onDenied(({ permission, operation }) => {
@@ -381,7 +382,7 @@ async function getEphemeralPoolStatusSafe(): Promise<Record<string, unknown> | n
 
 function sendConfigError(userId: string, message: string, operation: "load" | "save" = "load"): void {
   try {
-    spindle.sendToFrontend({ type: "config_error", message, operation }, userId);
+    spindle.sendToFrontend({ type: "config_error", message, operation } satisfies BackendToFrontendMessage, userId);
   } catch {
     // If frontend delivery itself fails, the backend log is the remaining signal.
   }
@@ -402,7 +403,7 @@ async function sendConfigState(userId: string, configToSend: TrackerConfig = con
     requestedPermissions: spindle.manifest?.permissions || [],
     seededPresets: runtime.seededPresets,
     ephemeralPoolStatus,
-  }, userId);
+  } satisfies BackendToFrontendMessage, userId);
 }
 
 function sendTagInterceptorConfig(userId: string, configToSend: TrackerConfig = config): void {
@@ -411,7 +412,7 @@ function sendTagInterceptorConfig(userId: string, configToSend: TrackerConfig = 
     tagName: configToSend.trackerTagName,
     tagType: configToSend.codeBlockIdentifier,
     removeFromMessage: configToSend.hideSimBlocks,
-  }, userId);
+  } satisfies BackendToFrontendMessage, userId);
 }
 
 spindle.onFrontendMessage(createFrontendMessageHandler({

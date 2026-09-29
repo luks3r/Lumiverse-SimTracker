@@ -2,14 +2,12 @@ import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import type { TrackerData } from "../shared/trackerData";
 import { readMessageContext } from "./frontendMessageSyntax";
 import type { createInlineTemplateProcessor } from "./inlineTemplates";
-import type { PendingTrackerPayload, TrackerRenderInputs, LatestMessageRenderIntent } from "./trackerRendering";
+import type { TrackerRenderInputs, LatestMessageRenderIntent } from "./trackerRendering";
+import type { TrackerHydration } from "./trackerHydration";
 
 export function registerChatEvents(deps: {
   ctx: SpindleFrontendContext;
   state: {
-    currentChatId: string | null;
-    awaitingLatestTrackerChatId: string | null;
-    pendingTrackerPayload: PendingTrackerPayload | null;
     configReady: boolean;
     latestTrackerMessageId: string | null;
     previousTrackerData: TrackerData | null;
@@ -25,10 +23,10 @@ export function registerChatEvents(deps: {
     requestedPermissions: string[];
     ephemeralPoolStatus: Record<string, unknown> | null;
   };
+  hydration: TrackerHydration;
   inlineProcessor: ReturnType<typeof createInlineTemplateProcessor>;
   updateRegenerateButton: () => void;
   renderEmpty: (message: string) => void;
-  requestLatestTracker: (chatId: string) => void;
   handleContent: (content: string, messageId: string | null) => void;
   clearSideTrackerRender: () => void;
   clearMessageTrackerRender: (messageId: string) => void;
@@ -42,7 +40,7 @@ export function registerChatEvents(deps: {
 }) {
   const {
     ctx, state, inlineProcessor, updateRegenerateButton, renderEmpty,
-    requestLatestTracker, handleContent, clearSideTrackerRender,
+    handleContent, clearSideTrackerRender,
     clearMessageTrackerRender, retryLatestMessageRenderIntent,
     retryGeneratingIndicator, clearLatestMessageRenderIntent,
     hideGeneratingIndicator, hideAllGeneratingIndicators, renderCapabilities,
@@ -63,14 +61,11 @@ export function registerChatEvents(deps: {
   };
 
   const handleChatSwitch = (chatId: string | null) => {
-    if (!chatId || chatId === state.currentChatId) return;
-    state.currentChatId = chatId;
-    state.awaitingLatestTrackerChatId = chatId;
-    state.pendingTrackerPayload = null;
+    if (!chatId || !deps.hydration.beginChat(chatId)) return;
     updateRegenerateButton();
     resetChatState();
     renderEmpty("When a message includes a tracker tag, cards will appear here.");
-    requestLatestTracker(chatId);
+    deps.hydration.requestLatest(chatId);
     // Wait two frames for Lumiverse to finish painting the new chat's
     // messages before running the inline-template sweep.
     if (state.configReady) {
@@ -91,11 +86,11 @@ export function registerChatEvents(deps: {
 
     // Synchronize to the host's actual selection, never to the chat named by
     // an arbitrary generation/message event (which may be a queued chat).
-    if (hostActiveChatId && hostActiveChatId !== state.currentChatId) {
+    if (hostActiveChatId && hostActiveChatId !== deps.hydration.currentChatId()) {
       handleChatSwitch(hostActiveChatId);
     }
 
-    const activeChatId = hostActiveChatId || state.currentChatId;
+    const activeChatId = hostActiveChatId || deps.hydration.currentChatId();
     if (!activeChatId) {
       // Startup fallback for hosts where getActiveChat() is unavailable and
       // CHAT_SWITCHED has not fired yet.

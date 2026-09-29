@@ -14455,7 +14455,13 @@ function readWireRecord(value) {
 }
 function readWireMessage(value) {
   const record = readWireRecord(value);
-  return record && typeof record.type === "string" ? record : null;
+  if (!record || typeof record.type !== "string")
+    return null;
+  if (record.type === "config" && !readWireRecord(record.config))
+    return null;
+  if (record.type === "tracker_history_latest" && record.entry != null && !readWireRecord(record.entry))
+    return null;
+  return record;
 }
 
 // src/backend/frontendMessages.ts

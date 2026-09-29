@@ -1,12 +1,13 @@
 import type { TrackerConfig } from "../shared/trackerConfig";
 import { buildImportedPreset, isInlinePackOnly } from "./importedPreset";
+import type { BackendToFrontendMessage } from "../shared/wireMessages";
 
 export function createImportService(deps: {
   hasEphemeralPermission: () => boolean;
   requestBlock: (bytes: number, options: { ttlMs: number; reason: string }) => Promise<{ reservationId: string }>;
   writeEphemeral: (path: string, text: string, options: { ttlMs: number; reservationId: string }) => Promise<unknown>;
   releaseBlock: (reservationId: string) => Promise<unknown>;
-  sendToFrontend: (message: Record<string, unknown>, userId: string) => void;
+  sendToFrontend: (message: BackendToFrontendMessage, userId: string) => void;
   readConfig: () => TrackerConfig;
   writeConfig: (config: TrackerConfig) => void;
   saveConfig: (userId: string) => Promise<void>;

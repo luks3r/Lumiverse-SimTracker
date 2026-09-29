@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import { registerChatEvents } from "../../../src/frontend/chatEvents";
+import { createTrackerHydration } from "../../../src/frontend/trackerHydration";
 import type { InlineProcessor } from "../../../src/frontend/inlineTemplates";
 
 describe("frontend chat lifecycle", () => {
@@ -15,9 +16,6 @@ describe("frontend chat lifecycle", () => {
     let sideClears = 0;
     let activeChatId = "chat-a";
     const state: Parameters<typeof registerChatEvents>[0]["state"] = {
-      currentChatId: "chat-a",
-      awaitingLatestTrackerChatId: null,
-      pendingTrackerPayload: { raw: "old", sourceContent: "old", messageId: "message-a", chatId: "chat-a", authoritative: true },
       configReady: false,
       latestTrackerMessageId: "message-a",
       previousTrackerData: { characters: [{ name: "Alice" }] },
@@ -51,13 +49,24 @@ describe("frontend chat lifecycle", () => {
       observeDocument: () => () => {},
       destroy: () => { inlineDestroyCount += 1; },
     };
+    const hydration = createTrackerHydration({
+      getActiveChatId: () => activeChatId,
+      sendLatestRequest: (chatId) => { requestedChats.push(chatId); },
+      isConfigReady: () => false,
+      hasRenderedMessage: () => false,
+      setComparisonBaseline: () => {},
+      renderPayload: () => {},
+    });
+    hydration.beginChat("chat-a");
+    hydration.acceptLatest("chat-a", null);
+    hydration.offerPending({ raw: "old", sourceContent: "old", messageId: "message-a", chatId: "chat-a", authoritative: true });
     const subscriptions = registerChatEvents({
       ctx,
       state,
+      hydration,
       inlineProcessor,
       updateRegenerateButton: () => {},
       renderEmpty: () => {},
-      requestLatestTracker: (chatId) => { requestedChats.push(chatId); },
       handleContent: (_content, messageId) => { if (messageId) renderedMessages.push(messageId); },
       clearSideTrackerRender: () => { sideClears += 1; },
       clearMessageTrackerRender: () => {},
@@ -75,9 +84,8 @@ describe("frontend chat lifecycle", () => {
     handlers.get("GENERATION_ENDED")?.({ chatId: "chat-a", messageId: "late-a", content: "stale tracker" });
     handlers.get("GENERATION_ENDED")?.({ chatId: "chat-b", messageId: "message-b", content: "new tracker" });
 
-    expect(state.currentChatId).toBe("chat-b");
-    expect(state.awaitingLatestTrackerChatId).toBe("chat-b");
-    expect(state.pendingTrackerPayload).toBeNull();
+    expect(hydration.currentChatId()).toBe("chat-b");
+    expect(hydration.awaitingChatId()).toBe("chat-b");
     expect(state.trackerMessageIds.size).toBe(0);
     expect(removedMounts).toEqual([oldMount]);
     expect(requestedChats).toEqual(["chat-b"]);

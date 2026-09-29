@@ -1,6 +1,7 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
 import type { TrackerConfig } from "../shared/trackerConfig";
 import type { TemplatePreset } from "../shared/templatePresets";
+import type { BackendToFrontendMessage } from "../shared/wireMessages";
 import { stringify as stringifyYaml } from "yaml";
 import { parseGeneratedTrackerPayload, parseTrackerPayload } from "./trackerPayload";
 import { buildSecondaryPrompt } from "./secondaryPrompt";
@@ -138,7 +139,7 @@ async function commitTrackerAppend(
     messageId: targetMessage.id,
     content: updatedContent,
     via,
-  }, userId || undefined);
+  } satisfies BackendToFrontendMessage, userId || undefined);
 }
 
 async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void> {
@@ -158,7 +159,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
   let trimmedModel = (config.secondaryLLMModel || "").trim();
 
   spindle.sendToFrontend(
-    { type: "secondary_generation_started", chatId, messageId: targetMessageId },
+    { type: "secondary_generation_started", chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
     userId || undefined,
   );
 
@@ -251,7 +252,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
               spindle.log.info("TypeSafe gate: no tracker changes warranted for this message");
               await trackEvent("sst.typesafe.gate_skip", { messageId: targetMessageId }, { chatId });
               spindle.sendToFrontend(
-                { type: "secondary_generation_skipped", chatId, messageId: targetMessageId },
+                { type: "secondary_generation_skipped", chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
                 userId || undefined,
               );
               return;
@@ -278,7 +279,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       const guidance = "Secondary LLM generation requires the 'generation_parameters' permission so the configured model id reaches the provider. Grant it in SimTracker's permission prompt and try again.";
       spindle.log.warn(guidance);
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId },
+        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
         userId || undefined,
       );
       return;
@@ -292,7 +293,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
         : describeMissingModelGuidance();
       spindle.log.warn(guidance);
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId },
+        { type: "secondary_generation_error", message: guidance, chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
         userId || undefined,
       );
       return;
@@ -344,7 +345,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     if (!generatedText) {
       spindle.log.warn("Secondary LLM returned empty response");
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId },
+        { type: "secondary_generation_error", message: "Empty response from LLM", chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
         userId || undefined,
       );
       return;
@@ -370,7 +371,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
     if (!parsed) {
       spindle.log.warn("Secondary LLM response and repair could not be parsed as valid tracker data");
       spindle.sendToFrontend(
-        { type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId },
+        { type: "secondary_generation_error", message: "LLM response was not valid tracker data after one repair attempt", chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
         userId || undefined,
       );
       return;
@@ -402,7 +403,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
             const message = `TypeSafe verification rejected the generated tracker: ${verdict.reasons.join("; ")}`;
             spindle.log.warn(message);
             spindle.sendToFrontend(
-              { type: "secondary_generation_error", message, chatId, messageId: targetMessageId },
+              { type: "secondary_generation_error", message, chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
               userId || undefined,
             );
             await trackEvent("sst.typesafe.verify_reject", { reasons: verdict.reasons }, { level: "warn", chatId });
@@ -435,7 +436,7 @@ async function generateTrackerWithSecondaryLLM(job: SecondaryJob): Promise<void>
       : rawMessage;
     spindle.log.error(`Secondary LLM generation failed: ${rawMessage}`);
     spindle.sendToFrontend(
-      { type: "secondary_generation_error", message, chatId, messageId: targetMessageId },
+      { type: "secondary_generation_error", message, chatId, messageId: targetMessageId } satisfies BackendToFrontendMessage,
       userId || undefined,
     );
     await trackEvent("sst.secondary_generation.failed", { error: rawMessage }, { level: "error" });
